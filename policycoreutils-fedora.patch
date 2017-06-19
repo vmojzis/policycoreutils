@@ -1,0 +1,2257 @@
+diff --git policycoreutils-2.6/gui/polgengui.py policycoreutils-2.6/gui/polgengui.py
+index 1d262a9..064001b 100644
+--- policycoreutils-2.6/gui/polgengui.py
++++ policycoreutils-2.6/gui/polgengui.py
+@@ -34,7 +34,9 @@ except ValueError as e:
+     sys.stderr.write("%s: %s\n" % (e.__class__.__name__, str(e)))
+     sys.exit(1)
+ 
++import sepolicy.generate
+ import sepolicy.interface
++
+ try:
+     from subprocess import getstatusoutput
+ except ImportError:
+@@ -679,7 +681,7 @@ class childWindow:
+                     entry.set_text("")
+                     return False
+             if name in self.all_modules:
+-                if self.verify(_("Module %s.pp already loaded in current policy.\nDo you want to continue?") % name, _("Verify Name")) == gtk.RESPONSE_NO:
++                if self.verify(_("Module %s already loaded in current policy.\nDo you want to continue?") % name, _("Verify Name")) == gtk.RESPONSE_NO:
+                     entry.set_text("")
+                     return False
+ 
+@@ -696,16 +698,16 @@ class childWindow:
+ 
+     def on_in_net_page_next(self, *args):
+         try:
+-            generate.verify_ports(self.in_tcp_entry.get_text())
+-            generate.verify_ports(self.in_udp_entry.get_text())
++            sepolicy.generate.verify_ports(self.in_tcp_entry.get_text())
++            sepolicy.generate.verify_ports(self.in_udp_entry.get_text())
+         except ValueError as e:
+             self.error(e.message)
+             return True
+ 
+     def on_out_net_page_next(self, *args):
+         try:
+-            generate.verify_ports(self.out_tcp_entry.get_text())
+-            generate.verify_ports(self.out_udp_entry.get_text())
++            sepolicy.generate.verify_ports(self.out_tcp_entry.get_text())
++            sepolicy.generate.verify_ports(self.out_udp_entry.get_text())
+         except ValueError as e:
+             self.error(e.message)
+             return True
+diff --git policycoreutils-2.6/gui/portsPage.py policycoreutils-2.6/gui/portsPage.py
+index b6445db..ed9d51b 100644
+--- policycoreutils-2.6/gui/portsPage.py
++++ policycoreutils-2.6/gui/portsPage.py
+@@ -34,6 +34,12 @@ from semanagePage import *
+ ## I18N
+ ##
+ PROGNAME = "policycoreutils"
++
++TYPE_COL = 0
++PROTOCOL_COL = 1
++MLS_COL = 2
++PORT_COL = 3
++
+ try:
+     import gettext
+     kwargs = {}
+diff --git policycoreutils-2.6/hll/pp/pp.c policycoreutils-2.6/hll/pp/pp.c
+index 2c9f53f..bf7582e 100644
+--- policycoreutils-2.6/hll/pp/pp.c
++++ policycoreutils-2.6/hll/pp/pp.c
+@@ -46,7 +46,7 @@ static void log_err(const char *fmt, ...)
+ 	}
+ }
+ 
+-static void usage(int err)
++static __attribute__((__noreturn__)) void usage(int err)
+ {
+ 	fprintf(stderr, "Usage: %s [OPTIONS] [IN_FILE [OUT_FILE]]\n", progname);
+ 	fprintf(stderr, "\n");
+@@ -141,7 +141,7 @@ int main(int argc, char **argv)
+ 		if (separator) {
+ 			*separator = '\0';
+ 		}
+-		if (strcmp(mod_name, cil_name) != 0) {
++		if (mod_name && strcmp(mod_name, cil_name) != 0) {
+ 			fprintf(stderr,	"Warning: SELinux userspace will refer to the module from %s as %s rather than %s\n", ifile, mod_name, cil_name);
+ 		}
+ 		free(cil_path);
+diff --git policycoreutils-2.6/load_policy/load_policy.c policycoreutils-2.6/load_policy/load_policy.c
+index 47d9b0f..7c2c2a7 100644
+--- policycoreutils-2.6/load_policy/load_policy.c
++++ policycoreutils-2.6/load_policy/load_policy.c
+@@ -17,7 +17,7 @@
+ #define PACKAGE "policycoreutils"	/* the name of this package lang translation */
+ #endif
+ 
+-void usage(char *progname)
++static __attribute__((__noreturn__)) void usage(const char *progname)
+ {
+ 	fprintf(stderr, _("usage:  %s [-qi]\n"), progname);
+ 	exit(1);
+diff --git policycoreutils-2.6/restorecond/watch.c policycoreutils-2.6/restorecond/watch.c
+index bdfc99d..b6fa825 100644
+--- policycoreutils-2.6/restorecond/watch.c
++++ policycoreutils-2.6/restorecond/watch.c
+@@ -179,7 +179,7 @@ int watch(int fd, const char *watch_file)
+ 			syslog(LOG_ERR, "Read error (%s)", strerror(errno));
+ 			return 0;
+ 		}
+-		syslog(LOG_ERR, "terminated");
++		syslog(LOG_INFO, "terminated");
+ 		return -1;
+ 	} else if (!len)
+ 		/* BUF_LEN too small? */
+diff --git policycoreutils-2.6/sandbox/sandboxX.sh policycoreutils-2.6/sandbox/sandboxX.sh
+index eaa500d..4774528 100644
+--- policycoreutils-2.6/sandbox/sandboxX.sh
++++ policycoreutils-2.6/sandbox/sandboxX.sh
+@@ -20,7 +20,7 @@ cat > ~/.config/openbox/rc.xml << EOF
+ </openbox_config>
+ EOF
+ 
+-(/usr/bin/Xephyr -resizeable -title "$TITLE" -terminate -screen $SCREENSIZE -dpi $DPI -nolisten tcp -displayfd 5 5>&1 2>/dev/null) | while read D; do
++(/usr/bin/Xephyr -resizeable -title "$TITLE" -terminate -reset -screen $SCREENSIZE -dpi $DPI -nolisten tcp -displayfd 5 5>&1 2>/dev/null) | while read D; do
+     export DISPLAY=:$D
+     cat > ~/seremote << __EOF
+ #!/bin/sh
+diff --git policycoreutils-2.6/scripts/fixfiles policycoreutils-2.6/scripts/fixfiles
+index fa43a53..cc504b7 100755
+--- policycoreutils-2.6/scripts/fixfiles
++++ policycoreutils-2.6/scripts/fixfiles
+@@ -116,14 +116,11 @@ exclude_dirs() {
+ fullFlag=0
+ BOOTTIME=""
+ VERBOSE="-p"
++[ -t 1 ] || VERBOSE=""
+ FORCEFLAG=""
+ DIRS=""
+ RPMILES=""
+-LOGFILE=`tty`
+-if [ $? != 0 ]; then
+-    LOGFILE="/dev/null"
+-fi
+-LOGGER=/usr/sbin/logger
++LOGFILE=/proc/self/fd/1
+ SETFILES=/sbin/setfiles
+ RESTORECON=/sbin/restorecon
+ FILESYSTEMSRW=`get_rw_labeled_mounts`
+@@ -137,12 +134,15 @@ else
+     FC=/etc/security/selinux/file_contexts
+ fi
+ 
++FC_SUB_DIST=${FC}.subs_dist
++FC_SUB=${FC}.subs
++FC_HOMEDIRS=${FC}.homedirs
+ #
+-# Log to either syslog or a LOGFILE
++# Write to LOGFILE
+ #
+ logit () {
+ if [ -n $LOGFILE ]; then
+-    echo $1 >> $LOGFILE
++    echo $1 >> "$LOGFILE"
+ fi
+ }
+ #
+@@ -244,20 +244,24 @@ then
+ 		logit "skipping the directory ${p}"
+ 	done
+ FC=$TEMPFCFILE
++/bin/cp -p ${FC_SUB_DIST} ${TEMPFCFILE}.subs_dist &>/dev/null || exit
++/bin/cp -p ${FC_SUB} ${TEMPFCFILE}.subs &>/dev/null || exit
++/bin/cp -p ${FC_HOMEDIRS} ${TEMPFCFILE}.homedirs &>/dev/null || exit
++
+ fi
+ if [ ! -z "$RPMFILES" ]; then
+     for i in `echo "$RPMFILES" | sed 's/,/ /g'`; do
+-	rpmlist $i | ${RESTORECON} $exclude_dirs ${FORCEFLAG} ${VERBOSE} $* -R -i -f - 2>&1 | cat >> $LOGFILE
++	rpmlist $i | ${RESTORECON} $exclude_dirs ${FORCEFLAG} ${VERBOSE} $* -R -i -f - >>$LOGFILE 2>&1
+     done
+     exit $?
+ fi
+ if [ ! -z "$FILEPATH" ]; then
+-    ${RESTORECON} $exclude_dirs ${FORCEFLAG} ${VERBOSE} -R $* $FILEPATH 2>&1 | cat >> $LOGFILE
++    ${RESTORECON} $exclude_dirs ${FORCEFLAG} ${VERBOSE} -R $* -- "$FILEPATH" >>$LOGFILE 2>&1
+     return
+ fi
+ if [  -n "${FILESYSTEMSRW}" ]; then
+     echo "${OPTION}ing `echo ${FILESYSTEMSRW}`"
+-    ${SETFILES} ${VERBOSE} $exclude_dirs -q ${FORCEFLAG} $* ${FC} ${FILESYSTEMSRW} 2>&1 | cat >> $LOGFILE
++    ${SETFILES} ${VERBOSE} $exclude_dirs -q ${FORCEFLAG} $* ${FC} ${FILESYSTEMSRW} >>$LOGFILE 2>&1
+ else
+     echo >&2 "fixfiles: No suitable file systems found"
+ fi
+@@ -265,7 +269,7 @@ if [ ${OPTION} != "Relabel" ]; then
+     return
+ fi
+ echo "Cleaning up labels on /tmp"
+-rm -rf /tmp/gconfd-* /tmp/pulse-* /tmp/orbit-* $TEMPFCFILE
++rm -rf /tmp/gconfd-* /tmp/pulse-* /tmp/orbit-* $TEMPFCFILE ${TEMPFCFILE}.subs_dist ${TEMPFCFILE}.subs ${TEMPFCFILE}.homedirs
+ 
+ UNDEFINED=`get_undefined_type` || exit $?
+ UNLABELED=`get_unlabeled_type` || exit $?
+@@ -314,7 +318,7 @@ process() {
+ case "$1" in
+     restore) restore Relabel;;
+     check) VERBOSE="-v"; restore Check -n;;
+-    verify) restore Verify -n -o -;;
++    verify) restore Verify -n;;
+     relabel) relabel;;
+     onboot)
+ 	> /.autorelabel
+@@ -382,8 +386,8 @@ done
+ shift $(( OPTIND - 1 ))
+ 
+ # Check for the command
+-command=$1
+-if [ -z $command ]; then
++command="$1"
++if [ -z "$command" ]; then
+     usage
+ fi
+ 
+@@ -395,17 +399,17 @@ shift
+ #
+ 
+ if [ ! -z "$RPMFILES" ]; then
+-    process $command
++    process "$command"
+     if [ $# -gt 0 ]; then
+ 	    usage
+     fi
+ else
+     if [ -z "$1" ]; then
+-	process $command
++	process "$command"
+     else
+ 	while [ -n "$1" ]; do
+-	    FILEPATH=$1
+-	    process $command
++	    FILEPATH="$1"
++	    process "$command"
+ 	    shift
+ 	done
+     fi
+diff --git policycoreutils-2.6/secon/secon.c policycoreutils-2.6/secon/secon.c
+index 134f4ee..c29d9fb 100644
+--- policycoreutils-2.6/secon/secon.c
++++ policycoreutils-2.6/secon/secon.c
+@@ -73,7 +73,7 @@ struct {
+ 		FALSE, FALSE, FALSE, FALSE, FALSE, FALSE,
+ 		    FALSE, FALSE, FALSE, OPTS_FROM_ARG, {0} } };
+ 
+-static void usage(const char *name, int exit_code)
++static __attribute__((__noreturn__)) void usage(const char *name, int exit_code)
+ {
+ 	fprintf(exit_code ? stderr : stdout,
+ 		"  Usage: %s [-%s] [ context | - ]\n"
+diff --git policycoreutils-2.6/semanage/semanage policycoreutils-2.6/semanage/semanage
+index 19a6c51..c109716 100644
+--- policycoreutils-2.6/semanage/semanage
++++ policycoreutils-2.6/semanage/semanage
+@@ -50,7 +50,7 @@ usage_login = "semanage login [-h] [-n] [-N] [-S STORE] ["
+ usage_login_dict = {' --add': ('-s SEUSER', '-r RANGE', 'LOGIN',), ' --modify': ('-s SEUSER', '-r RANGE', 'LOGIN',), ' --delete': ('LOGIN',), ' --list': ('-C',), ' --extract': ('',), ' --deleteall': ('',)}
+ 
+ usage_fcontext = "semanage fcontext [-h] [-n] [-N] [-S STORE] ["
+-usage_fcontext_dict = {' --add': ('(', '-t TYPE', '-f FTYPE', '-r RANGE', '-s SEUSER', '|', '-e EQUAL', ')', 'FILE_SPEC', ')',), ' --delete': ('(', '-t TYPE', '-f FTYPE', '|', '-e EQUAL', ')', 'FILE_SPEC', ')',), ' --modify': ('(', '-t TYPE', '-f FTYPE', '-r RANGE', '-s SEUSER', '|', '-e EQUAL', ')', 'FILE_SPEC )',), ' --list': ('-C',), ' --extract': ('',), ' --deleteall': ('',)}
++usage_fcontext_dict = {' --add': ('(', '-t TYPE', '-f FTYPE', '-r RANGE', '-s SEUSER', '|', '-e EQUAL', ')', 'FILE_SPEC',), ' --delete': ('(', '-t TYPE', '-f FTYPE', '|', '-e EQUAL', ')', 'FILE_SPEC',), ' --modify': ('(', '-t TYPE', '-f FTYPE', '-r RANGE', '-s SEUSER', '|', '-e EQUAL', ')', 'FILE_SPEC',), ' --list': ('[-C]',), ' --extract': ('',), ' --deleteall': ('',)}
+ 
+ usage_user = "semanage user [-h] [-n] [-N] [-S STORE] ["
+ usage_user_dict = {' --add': ('(', '-L LEVEL', '-R ROLES', '-r RANGE', '-s SEUSER', 'selinux_name'')'), ' --delete': ('selinux_name',), ' --modify': ('(', '-L LEVEL', '-R ROLES', '-r RANGE', '-s SEUSER', 'selinux_name', ')'), ' --list': ('-C',), ' --extract': ('',), ' --deleteall': ('',)}
+@@ -99,8 +99,8 @@ class seParser(argparse.ArgumentParser):
+     def error(self, message):
+         if len(sys.argv) == 2:
+             self.print_help()
+-            sys.exit(2)
+-        self.print_usage()
++        else:
++            self.print_usage()
+         self.exit(2, ('%s: error: %s\n') % (self.prog, message))
+ 
+ 
+@@ -346,10 +346,7 @@ def handleFcontext(args):
+     # we can not use mutually for equal because we can define some actions together with equal
+     fcontext_equal_args = {'equal': [('list', 'locallist', 'type', 'ftype', 'seuser', 'deleteall', 'extract'), ()]}
+ 
+-    if args.action is None:
+-        print("usage: " + "%s" % generate_custom_usage(usage_fcontext, usage_fcontext_dict))
+-        sys.exit(2)
+-    elif args.action and args.equal:
++    if args.action and args.equal:
+         handle_opts(args, fcontext_equal_args, "equal")
+     else:
+         handle_opts(args, fcontext_args, args.action)
+@@ -398,7 +395,7 @@ If you do not specify a file type, the file type will default to "all files".
+     parser_add_noreload(fcontextParser, "fcontext")
+     parser_add_store(fcontextParser, "fcontext")
+ 
+-    fcontext_action = fcontextParser.add_mutually_exclusive_group(required=False)
++    fcontext_action = fcontextParser.add_mutually_exclusive_group(required=True)
+     parser_add_add(fcontext_action, "fcontext")
+     parser_add_delete(fcontext_action, "fcontext")
+     parser_add_modify(fcontext_action, "fcontext")
+@@ -645,19 +642,9 @@ def setupNodeParser(subparsers):
+ 
+ 
+ def handleBoolean(args):
+-    boolean_args = {'list': [('state', 'boolean'), ('')], 'modify': [('localist'), ('')], 'extract': [('locallist', 'state', 'boolean'), ('')], 'deleteall': [('locallist'), ('')], 'state': [('locallist', 'list', 'extract', 'deleteall'), ('modify')]}
+-    if args.action is None:
+-        print("Usage: " + "%s" % generate_custom_usage(usage_boolean, usage_boolean_dict))
+-        sys.exit(2)
+-    # TODO: should be added to handle_opts logic
+-    elif args.action is "modify" and not args.boolean:
+-        print("boolean name required ")
+-        sys.exit(1)
+-    elif args.action is "modify" and args.boolean and not args.state:
+-        print("state option is needed")
+-        sys.exit(1)
+-    else:
+-        handle_opts(args, boolean_args, args.action)
++    boolean_args = {'list': [('state', 'boolean'), ('')], 'modify': [('localist'), ('boolean', 'state')], 'extract': [('locallist', 'state', 'boolean'), ('')], 'deleteall': [('locallist'), ('')], 'state': [('locallist', 'list', 'extract', 'deleteall'), ('modify')]}
++
++    handle_opts(args, boolean_args, args.action)
+ 
+     OBJECT = object_dict['boolean']()
+     OBJECT.set_reload(args.noreload)
+@@ -683,7 +670,7 @@ def setupBooleanParser(subparsers):
+     parser_add_store(booleanParser, "boolean")
+     booleanParser.add_argument('boolean', nargs="?", default=None, help=_('boolean'))
+ 
+-    boolean_action = booleanParser.add_mutually_exclusive_group(required=False)
++    boolean_action = booleanParser.add_mutually_exclusive_group(required=True)
+     #add_add(boolean_action)
+     parser_add_modify(boolean_action, "boolean")
+     parser_add_list(boolean_action, "boolean")
+diff --git policycoreutils-2.6/semanage/semanage.8 policycoreutils-2.6/semanage/semanage.8
+index ac39862..75b782f 100644
+--- policycoreutils-2.6/semanage/semanage.8
++++ policycoreutils-2.6/semanage/semanage.8
+@@ -51,8 +51,7 @@ to SELinux user identities (which controls the initial security context
+ assigned to Linux users when they login and bounds their authorized role set)
+ as well as security context mappings for various kinds of objects, such
+ as network ports, interfaces, and nodes (hosts) as well as the file
+-context mapping. See the EXAMPLES section below for some examples
+-of common usage.  Note that the semanage login command deals with the
++context mapping. Note that the semanage login command deals with the
+ mapping from Linux usernames (logins) to SELinux user identities,
+ while the semanage user command deals with the mapping from SELinux
+ user identities to authorized role sets.  In most cases, only the
+diff --git policycoreutils-2.6/semanage/seobject.py policycoreutils-2.6/semanage/seobject.py
+index bb049c0..a977d68 100644
+--- policycoreutils-2.6/semanage/seobject.py
++++ policycoreutils-2.6/semanage/seobject.py
+@@ -84,7 +84,7 @@ file_type_str_to_option = {"all files": "a",
+                            "directory": "d",
+                            "character device": "c",
+                            "block device": "b",
+-                           "socket file": "s",
++                           "socket": "s",
+                            "symbolic link": "l",
+                            "named pipe": "p"}
+ 
+@@ -385,8 +385,10 @@ class moduleRecords(semanageRecords):
+             print("%-25s %-9s %-5s %s" % (t[0], t[2], t[3], disabled))
+ 
+     def add(self, file, priority):
++        if not file:
++            raise ValueError(_("You did not define module."))
+         if not os.path.exists(file):
+-            raise ValueError(_("Module does not exists %s ") % file)
++            raise ValueError(_("Module does not exist: %s ") % file)
+ 
+         rc = semanage_set_default_priority(self.sh, priority)
+         if rc < 0:
+@@ -397,6 +399,8 @@ class moduleRecords(semanageRecords):
+             self.commit()
+ 
+     def set_enabled(self, module, enable):
++        if not module:
++            raise ValueError(_("You did not define module name."))
+         for m in module.split():
+             rc, key = semanage_module_key_create(self.sh)
+             if rc < 0:
+@@ -415,11 +419,15 @@ class moduleRecords(semanageRecords):
+         self.commit()
+ 
+     def modify(self, file):
++        if not file:
++            raise ValueError(_("You did not define module."))
+         rc = semanage_module_update_file(self.sh, file)
+         if rc >= 0:
+             self.commit()
+ 
+     def delete(self, module, priority):
++        if not module:
++            raise ValueError(_("You did not define module name."))
+         rc = semanage_set_default_priority(self.sh, priority)
+         if rc < 0:
+             raise ValueError(_("Invalid priority %d (needs to be between 1 and 999)") % priority)
+@@ -492,7 +500,7 @@ class permissiveRecords(semanageRecords):
+         try:
+             import sepolgen.module as module
+         except ImportError:
+-            raise ValueError(_("The sepolgen python module is required to setup permissive domains.\nIn some distributions it is included in the policycoreutils-devel patckage.\n# yum install policycoreutils-devel\nOr similar for your distro."))
++            raise ValueError(_("The sepolgen python module is required to setup permissive domains.\nIn some distributions it is included in the policycoreutils-devel package.\n# yum install policycoreutils-devel\nOr similar for your distro."))
+ 
+         name = "permissive_%s" % type
+         modtxt = "(typepermissive %s)" % type
+@@ -1823,7 +1831,7 @@ class fcontextRecords(semanageRecords):
+     def modify_equal(self, target, substitute):
+         self.begin()
+         if target not in self.equiv.keys():
+-            raise ValueError(_("Equivalence class for %s does not exists") % target)
++            raise ValueError(_("Equivalence class for %s does not exist") % target)
+         self.equiv[target] = substitute
+         self.equal_ind = True
+ 
+@@ -1953,10 +1961,12 @@ class fcontextRecords(semanageRecords):
+             if not exists:
+                 raise ValueError(_("File context for %s is not defined") % target)
+ 
+-        (rc, fcontext) = semanage_fcontext_query_local(self.sh, k)
+-        if rc < 0:
+-            (rc, fcontext) = semanage_fcontext_query(self.sh, k)
+-            if rc < 0:
++        try:
++            (rc, fcontext) = semanage_fcontext_query_local(self.sh, k)
++        except OSError:
++            try:
++                (rc, fcontext) = semanage_fcontext_query(self.sh, k)
++            except OSError:
+                 raise ValueError(_("Could not query file context for %s") % target)
+ 
+         if setype != "<<none>>":
+diff --git policycoreutils-2.6/semodule_package/semodule_package.c policycoreutils-2.6/semodule_package/semodule_package.c
+index d2a5fd0..e472054 100644
+--- policycoreutils-2.6/semodule_package/semodule_package.c
++++ policycoreutils-2.6/semodule_package/semodule_package.c
+@@ -72,6 +72,10 @@ static int file_to_data(const char *path, char **data, size_t * len)
+ 			path, strerror(errno));
+ 		goto err;
+ 	}
++	if (!sb.st_size) {
++		*len = 0;
++		return 0;
++	}
+ 
+ 	*data = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+ 	if (*data == MAP_FAILED) {
+diff --git policycoreutils-2.6/sepolicy/org.selinux.conf policycoreutils-2.6/sepolicy/org.selinux.conf
+index a350978..1ae079d 100644
+--- policycoreutils-2.6/sepolicy/org.selinux.conf
++++ policycoreutils-2.6/sepolicy/org.selinux.conf
+@@ -12,12 +12,8 @@
+ 
+   <!-- Allow anyone to invoke methods on the interfaces,
+        authorization is performed by PolicyKit -->
+-  <policy at_console="true">
+-    <allow send_destination="org.selinux"/>
+-  </policy>
+   <policy context="default">
+-    <allow send_destination="org.selinux"
+-	   send_interface="org.freedesktop.DBus.Introspectable"/>
++    <allow send_destination="org.selinux"/>
+   </policy>
+ 
+ </busconfig>
+diff --git policycoreutils-2.6/sepolicy/org.selinux.policy policycoreutils-2.6/sepolicy/org.selinux.policy
+index 0126610..9772127 100644
+--- policycoreutils-2.6/sepolicy/org.selinux.policy
++++ policycoreutils-2.6/sepolicy/org.selinux.policy
+@@ -70,9 +70,9 @@
+ 	  <allow_active>auth_admin_keep</allow_active>
+         </defaults>
+     </action>
+-    <action id="org.selinux.change_policy_type">
+-        <description>SELinux write access</description>
+-        <message>System policy prevents change_policy_type access to SELinux</message>
++    <action id="org.selinux.change_default_mode">
++        <description>Change SELinux default enforcing mode</description>
++        <message>System policy prevents change_default_policy access to SELinux</message>
+         <defaults>
+           <allow_any>no</allow_any>
+           <allow_inactive>no</allow_inactive>
+diff --git policycoreutils-2.6/sepolicy/selinux_client.py policycoreutils-2.6/sepolicy/selinux_client.py
+index 7f4a91c..dc29f28 100644
+--- policycoreutils-2.6/sepolicy/selinux_client.py
++++ policycoreutils-2.6/sepolicy/selinux_client.py
+@@ -39,6 +39,6 @@ if __name__ == "__main__":
+     try:
+         dbus_proxy = SELinuxDBus()
+         resp = dbus_proxy.customized()
+-        print convert_customization(resp)
+-    except dbus.DBusException, e:
+-        print e
++        print(convert_customization(resp))
++    except dbus.DBusException as e:
++        print(e)
+diff --git policycoreutils-2.6/sepolicy/selinux_server.py policycoreutils-2.6/sepolicy/selinux_server.py
+index cdf4d16..84720f9 100644
+--- policycoreutils-2.6/sepolicy/selinux_server.py
++++ policycoreutils-2.6/sepolicy/selinux_server.py
+@@ -46,13 +46,13 @@ class selinux_server(slip.dbus.service.Object):
+         return buf
+ 
+     #
+-    # The semodule_list method will return the output of semodule -l, using the customized polkit,
++    # The semodule_list method will return the output of semodule --list=full, using the customized polkit,
+     # since this is a readonly behaviour
+     #
+     @slip.dbus.polkit.require_auth("org.selinux.semodule_list")
+     @dbus.service.method("org.selinux", in_signature='', out_signature='s')
+     def semodule_list(self):
+-        p = Popen(["/usr/sbin/semodule", "-l"], stdout=PIPE, stderr=PIPE)
++        p = Popen(["/usr/sbin/semodule", "--list=full"], stdout=PIPE, stderr=PIPE)
+         buf = p.stdout.read()
+         output = p.communicate()
+         if p.returncode and p.returncode != 0:
+diff --git policycoreutils-2.6/sepolicy/sepolicy-generate.8 policycoreutils-2.6/sepolicy/sepolicy-generate.8
+index 2e67456..0c5f998 100644
+--- policycoreutils-2.6/sepolicy/sepolicy-generate.8
++++ policycoreutils-2.6/sepolicy/sepolicy-generate.8
+@@ -13,7 +13,7 @@ Common options
+ Confined Applications
+ 
+ .br
+-.B sepolicy generate \-\-application [\-n NAME] command [\-w WRITE_PATH ]
++.B sepolicy generate \-\-application [\-n NAME] [\-u USER ]command [\-w WRITE_PATH ]
+ .br
+ .B sepolicy generate \-\-cgi [\-n NAME] command [\-w WRITE_PATH ]
+ .br
+diff --git policycoreutils-2.6/sepolicy/sepolicy.py policycoreutils-2.6/sepolicy/sepolicy.py
+index 3e502a7..5bf9b52 100755
+--- policycoreutils-2.6/sepolicy/sepolicy.py
++++ policycoreutils-2.6/sepolicy/sepolicy.py
+@@ -262,7 +262,7 @@ def _print_net(src, protocol, perm):
+     if len(portdict) > 0:
+         bold_start = "\033[1m"
+         bold_end = "\033[0;0m"
+-        print "\n" + bold_start + "%s: %s %s" % (src, protocol, perm) + bold_end
++        print("\n" + bold_start + "%s: %s %s" % (src, protocol, perm) + bold_end)
+         port_strings = []
+         boolean_text = ""
+         for p in portdict:
+@@ -275,7 +275,7 @@ def _print_net(src, protocol, perm):
+                     port_strings.append("%s (%s)" % (", ".join(recs), t))
+         port_strings.sort(numcmp)
+         for p in port_strings:
+-            print "\t" + p
++            print("\t" + p)
+ 
+ 
+ def network(args):
+@@ -286,7 +286,7 @@ def network(args):
+             if i[0] not in all_ports:
+                 all_ports.append(i[0])
+         all_ports.sort()
+-        print "\n".join(all_ports)
++        print("\n".join(all_ports))
+ 
+     for port in args.port:
+         found = False
+@@ -297,18 +297,18 @@ def network(args):
+                 else:
+                     range = "%s-%s" % (i[0], i[1])
+                 found = True
+-                print "%d: %s %s %s" % (port, i[2], portrecsbynum[i][0], range)
++                print("%d: %s %s %s" % (port, i[2], portrecsbynum[i][0], range))
+         if not found:
+             if port < 500:
+-                print "Undefined reserved port type"
++                print("Undefined reserved port type")
+             else:
+-                print "Undefined port type"
++                print("Undefined port type")
+ 
+     for t in args.type:
+         if (t, 'tcp') in portrecs.keys():
+-            print "%s: tcp: %s" % (t, ",".join(portrecs[t, 'tcp']))
++            print("%s: tcp: %s" % (t, ",".join(portrecs[t, 'tcp'])))
+         if (t, 'udp') in portrecs.keys():
+-            print "%s: udp: %s" % (t, ",".join(portrecs[t, 'udp']))
++            print( "%s: udp: %s" % (t, ",".join(portrecs[t, 'udp'])))
+ 
+     for a in args.applications:
+         d = sepolicy.get_init_transtype(a)
+@@ -357,7 +357,7 @@ def manpage(args):
+ 
+     for domain in test_domains:
+         m = ManPage(domain, path, args.root, args.source_files, args.web)
+-        print m.get_man_page_path()
++        print(m.get_man_page_path())
+ 
+     if args.web:
+         HTMLManPages(manpage_roles, manpage_domains, path, args.os)
+@@ -418,7 +418,7 @@ def communicate(args):
+     out = list(set(writable) & set(readable))
+ 
+     for t in out:
+-        print t
++        print(t)
+ 
+ 
+ def gen_communicate_args(parser):
+@@ -445,7 +445,7 @@ def booleans(args):
+     args.booleans.sort()
+ 
+     for b in args.booleans:
+-        print "%s=_(\"%s\")" % (b, boolean_desc(b))
++        print("%s=_(\"%s\")" % (b, boolean_desc(b)))
+ 
+ 
+ def gen_booleans_args(parser):
+@@ -484,16 +484,16 @@ def print_interfaces(interfaces, args, append=""):
+     for i in interfaces:
+         if args.verbose:
+             try:
+-                print get_interface_format_text(i + append)
++                print(get_interface_format_text(i + append))
+             except KeyError:
+-                print i
++                print(i)
+         if args.compile:
+             try:
+                 interface_compile_test(i)
+             except KeyError:
+-                print i
++                print(i)
+         else:
+-            print i
++            print(i)
+ 
+ 
+ def interface(args):
+@@ -565,7 +565,7 @@ def generate(args):
+     if args.policytype in APPLICATIONS:
+         mypolicy.gen_writeable()
+         mypolicy.gen_symbols()
+-    print mypolicy.generate(args.path)
++    print(mypolicy.generate(args.path))
+ 
+ 
+ def gen_interface_args(parser):
+@@ -698,12 +698,12 @@ if __name__ == '__main__':
+         args = parser.parse_args(args=parser_args)
+         args.func(args)
+         sys.exit(0)
+-    except ValueError, e:
++    except ValueError as e:
+         sys.stderr.write("%s: %s\n" % (e.__class__.__name__, str(e)))
+         sys.exit(1)
+-    except IOError, e:
++    except IOError as e:
+         sys.stderr.write("%s: %s\n" % (e.__class__.__name__, str(e)))
+         sys.exit(1)
+     except KeyboardInterrupt:
+-        print "Out"
++        print("Out")
+         sys.exit(0)
+diff --git policycoreutils-2.6/sepolicy/sepolicy/__init__.py policycoreutils-2.6/sepolicy/sepolicy/__init__.py
+index 8fbd5b4..254fc67 100644
+--- policycoreutils-2.6/sepolicy/sepolicy/__init__.py
++++ policycoreutils-2.6/sepolicy/sepolicy/__init__.py
+@@ -171,6 +171,7 @@ def info(setype, name=None):
+             'aliases': map(str, x.aliases()),
+             'name': str(x),
+             'permissive': bool(x.ispermissive),
++            'attributes': map(str, x.attributes())
+         } for x in q.results())
+ 
+     elif setype == ROLE:
+@@ -383,7 +384,12 @@ def get_conditionals(src, dest, tclass, perm):
+ 
+ 
+ def get_conditionals_format_text(cond):
+-    enabled = len(filter(lambda x: x['boolean'][0][1], cond)) > 0
++
++    enabled = False
++    for x in cond:
++        if x['boolean'][0][1]:
++            enabled = True
++            break
+     return _("-- Allowed %s [ %s ]") % (enabled, " || ".join(set(map(lambda x: "%s=%d" % (x['boolean'][0][0], x['boolean'][0][1]), cond))))
+ 
+ 
+@@ -465,7 +471,7 @@ def find_file(reg):
+ 
+     try:
+         pat = re.compile(r"%s$" % reg)
+-        return filter(pat.match, map(lambda x: path + x, os.listdir(path)))
++        return [x for x in map(lambda x: path + x, os.listdir(path)) if pat.match(x)]
+     except:
+         return []
+ 
+@@ -589,7 +595,7 @@ def get_fcdict(fc_path=selinux.selinux_file_context_path()):
+ 
+ def get_transitions_into(setype):
+     try:
+-        return filter(lambda x: x["transtype"] == setype, search([TRANSITION], {'class': 'process'}))
++        return [x for x in search([TRANSITION], {'class': 'process'}) if x["transtype"] == setype]
+     except (TypeError, AttributeError):
+         pass
+     return None
+@@ -605,7 +611,7 @@ def get_transitions(setype):
+ 
+ def get_file_transitions(setype):
+     try:
+-        return filter(lambda x: x['class'] != "process", search([TRANSITION], {'source': setype}))
++        return [x for x in search([TRANSITION], {'source': setype}) if x['class'] != "process"]
+     except (TypeError, AttributeError):
+         pass
+     return None
+@@ -663,6 +669,23 @@ def get_init_entrypoint(transtype):
+ 
+     return entrypoints
+ 
++def get_init_entrypoints_str():
++    q = setools.TERuleQuery(_pol,
++                            ruletype=["type_transition"],
++                            source="init_t",
++                            tclass=["process"])
++    entrypoints = {}
++    for i in q.results():
++        try:
++            transtype = str(i.default)
++            if transtype in entrypoints:
++                entrypoints[transtype].append(str(i.target))
++            else:
++                entrypoints[transtype] = [str(i.target)]
++        except AttributeError:
++            continue
++
++    return entrypoints
+ 
+ def get_init_entrypoint_target(entrypoint):
+     try:
+@@ -695,7 +718,7 @@ def get_methods():
+     # List of per_role_template interfaces
+         ifs = interfaces.InterfaceSet()
+         ifs.from_file(fd)
+-        methods = ifs.interfaces.keys()
++        methods = list(ifs.interfaces.keys())
+         fd.close()
+     except:
+         sys.stderr.write("could not open interface info [%s]\n" % fn)
+@@ -725,7 +748,7 @@ def get_all_role_allows():
+         return role_allows
+     role_allows = {}
+ 
+-    q = setools.RBACRuleQuery(_pol, ruletype='allow')
++    q = setools.RBACRuleQuery(_pol, ruletype=[ALLOW])
+     for r in q.results():
+         src = str(r.source)
+         tgt = str(r.target)
+@@ -752,7 +775,10 @@ def get_all_entrypoint_domains():
+ 
+ 
+ def gen_interfaces():
+-    import commands
++    try:
++        from commands import getstatusoutput
++    except ImportError:
++        from subprocess import getstatusoutput
+     ifile = defaults.interface_info()
+     headers = defaults.headers()
+     try:
+@@ -763,7 +789,7 @@ def gen_interfaces():
+ 
+     if os.getuid() != 0:
+         raise ValueError(_("You must regenerate interface info by running /usr/bin/sepolgen-ifgen"))
+-    print(commands.getstatusoutput("/usr/bin/sepolgen-ifgen")[1])
++    print(getstatusoutput("/usr/bin/sepolgen-ifgen")[1])
+ 
+ 
+ def gen_port_dict():
+@@ -1082,24 +1108,14 @@ def boolean_desc(boolean):
+ 
+ 
+ def get_os_version():
+-    os_version = ""
+-    pkg_name = "selinux-policy"
++    system_release = ""
+     try:
+-        import commands
+-        rc, output = commands.getstatusoutput("rpm -q '%s'" % pkg_name)
+-        if rc == 0:
+-            os_version = output.split(".")[-2]
+-    except:
+-        os_version = ""
+-
+-    if os_version[0:2] == "fc":
+-        os_version = "Fedora" + os_version[2:]
+-    elif os_version[0:2] == "el":
+-        os_version = "RHEL" + os_version[2:]
+-    else:
+-        os_version = ""
++        with open('/etc/system-release') as f:
++            system_release = f.readline().rstrip()
++    except IOError:
++        system_release = "Misc"
+ 
+-    return os_version
++    return system_release
+ 
+ 
+ def reinit():
+diff --git policycoreutils-2.6/sepolicy/sepolicy/communicate.py policycoreutils-2.6/sepolicy/sepolicy/communicate.py
+index b96c4b9..299316e 100755
+--- policycoreutils-2.6/sepolicy/sepolicy/communicate.py
++++ policycoreutils-2.6/sepolicy/sepolicy/communicate.py
+@@ -34,8 +34,8 @@ def usage(parser, msg):
+ 
+ def expand_attribute(attribute):
+     try:
+-        return sepolicy.info(sepolicy.ATTRIBUTE, attribute)[0]["types"]
+-    except RuntimeError:
++        return list(next(sepolicy.info(sepolicy.ATTRIBUTE, attribute))["types"])
++    except StopIteration:
+         return [attribute]
+ 
+ 
+diff --git policycoreutils-2.6/sepolicy/sepolicy/generate.py policycoreutils-2.6/sepolicy/sepolicy/generate.py
+index 65b33b6..ad59350 100644
+--- policycoreutils-2.6/sepolicy/sepolicy/generate.py
++++ policycoreutils-2.6/sepolicy/sepolicy/generate.py
+@@ -31,21 +31,21 @@ import time
+ import types
+ import platform
+ 
+-from templates import executable
+-from templates import boolean
+-from templates import etc_rw
+-from templates import unit_file
+-from templates import var_cache
+-from templates import var_spool
+-from templates import var_lib
+-from templates import var_log
+-from templates import var_run
+-from templates import tmp
+-from templates import rw
+-from templates import network
+-from templates import script
+-from templates import spec
+-from templates import user
++from .templates import executable
++from .templates import boolean
++from .templates import etc_rw
++from .templates import unit_file
++from .templates import var_cache
++from .templates import var_spool
++from .templates import var_lib
++from .templates import var_log
++from .templates import var_run
++from .templates import tmp
++from .templates import rw
++from .templates import network
++from .templates import script
++from .templates import spec
++from .templates import user
+ import sepolgen.interfaces as interfaces
+ import sepolgen.defaults as defaults
+ 
+@@ -92,7 +92,7 @@ def get_rpm_nvr_list(package):
+             nvr = get_rpm_nvr_from_header(h)
+             break
+     except:
+-        print("Failed to retrieve rpm info for %s") % package
++        print(("Failed to retrieve rpm info for %s") % package)
+         nvr = None
+ 
+     return nvr
+diff --git policycoreutils-2.6/sepolicy/sepolicy/gui.py policycoreutils-2.6/sepolicy/sepolicy/gui.py
+index 7f1888c..bc6c2b1 100644
+--- policycoreutils-2.6/sepolicy/sepolicy/gui.py
++++ policycoreutils-2.6/sepolicy/sepolicy/gui.py
+@@ -67,8 +67,14 @@ enabled = [_("No"), _("Yes")]
+ action = [_("Disable"), _("Enable")]
+ 
+ 
+-def compare(a, b):
+-    return cmp(a.lower(), b.lower())
++def cmp(a, b):
++    if a is None and b is None:
++        return 0
++    if a is None:
++        return -1
++    if b is None:
++        return 1
++    return (a > b) - (a < b)
+ 
+ import distutils.sysconfig
+ ADVANCED_LABEL = (_("Advanced >>"), _("Advanced <<"))
+@@ -110,6 +116,7 @@ class SELinuxGui():
+ 
+     def __init__(self, app=None, test=False):
+         self.finish_init = False
++        self.advanced_init = True
+         self.opage = START_PAGE
+         self.dbus = SELinuxDBus()
+         try:
+@@ -118,17 +125,11 @@ class SELinuxGui():
+             print(e)
+             self.quit()
+ 
+-        sepolicy_domains = sepolicy.get_all_domains()
+-        sepolicy_domains.sort(compare)
+-        if app and app not in sepolicy_domains:
+-            self.error(_("%s is not a valid domain" % app))
+-            self.quit()
+-
+         self.init_cur()
+         self.application = app
+         self.filter_txt = ""
+         builder = Gtk.Builder()  # BUILDER OBJ
+-        self.code_path = distutils.sysconfig.get_python_lib(plat_specific=True) + "/sepolicy/"
++        self.code_path = distutils.sysconfig.get_python_lib(plat_specific=False) + "/sepolicy/"
+         glade_file = self.code_path + "sepolicy.glade"
+         builder.add_from_file(glade_file)
+         self.outer_notebook = builder.get_object("outer_notebook")
+@@ -147,7 +148,7 @@ class SELinuxGui():
+         self.files_add = False
+         self.network_add = False
+ 
+-        self.all_list = []
++        self.all_domains = []
+         self.installed_list = []
+         self.previously_modified = {}
+ 
+@@ -159,10 +160,10 @@ class SELinuxGui():
+         self.invalid_entry = False
+         # Advanced search window ****************************
+         self.advanced_search_window = builder.get_object("advanced_search_window")
+-        self.advanced_search_liststore = builder.get_object("Advanced_search_liststore")
+-        self.advanced_search_liststore.set_sort_column_id(0, Gtk.SortType.ASCENDING)
+         self.advanced_search_filter = builder.get_object("advanced_filter")
+         self.advanced_search_filter.set_visible_func(self.filter_the_data)
++        self.advanced_search_sort = builder.get_object("advanced_sort")
++
+         self.advanced_filter_entry = builder.get_object("advanced_filter_entry")
+         self.advanced_search_treeview = builder.get_object("advanced_search_treeview")
+         self.advanced_search = False
+@@ -431,12 +432,10 @@ class SELinuxGui():
+ 
+         # Combobox and Entry items **************************
+         self.combobox_menu = builder.get_object("combobox_org")                    # This is the combobox box object, aka the arrow next to the entry text bar
+-        self.combobox_menu_model = builder.get_object("application_liststore")
++        self.application_liststore = builder.get_object("application_liststore")
+         self.completion_entry = builder.get_object("completion_entry")  # self.combobox_menu.get_child()
+-        self.completion_entry_model = builder.get_object("application_liststore")
+         self.entrycompletion_obj = builder.get_object("entrycompletion_obj")
+         #self.entrycompletion_obj = Gtk.EntryCompletion()
+-        self.entrycompletion_obj.set_model(self.completion_entry_model)
+         self.entrycompletion_obj.set_minimum_key_length(0)
+         self.entrycompletion_obj.set_text_column(0)
+         self.entrycompletion_obj.set_match_func(self.match_func, None)
+@@ -491,37 +490,41 @@ class SELinuxGui():
+         self.loading = 1
+         path = None
+         if test:
+-            domains = ["httpd_t", "abrt_t"]
+-            if app and app not in domains:
+-                domains.append(app)
++            self.all_domains = ["httpd_t", "abrt_t"]
++            if app and app not in self.all_domains:
++                self.all_domains.append(app)
+         else:
+-            domains = sepolicy_domains
+-            loading_gui.show()
+-        length = len(domains)
+-        for domain in domains:
++            self.all_domains = sepolicy.get_all_domains()
++        self.all_domains.sort(key=str.lower)
++
++        if app and app not in self.all_domains:
++            self.error(_("%s is not a valid domain" % app))
++            self.quit()
++
++        loading_gui.show()
++        length = len(self.all_domains)
++
++        entrypoint_dict = sepolicy.get_init_entrypoints_str()
++        for domain in self.all_domains:
+             # After the user selects a path in the drop down menu call
+             # get_init_entrypoint_target(entrypoint) to get the transtype
+             # which will give you the application
+-            self.combo_box_initialize(domain, None)
+-            self.advanced_search_initialize(domain)
+-            self.all_list.append(domain)
++            self.combo_box_add(domain, domain)
+             self.percentage = float(float(self.loading) / float(length))
+             self.progress_bar.set_fraction(self.percentage)
+             self.progress_bar.set_pulse_step(self.percentage)
+             self.idle_func()
+ 
+-            entrypoint = sepolicy.get_init_entrypoint(domain)
+-            if entrypoint:
++            for entrypoint in entrypoint_dict.get(domain, []):
+                 path = sepolicy.find_entrypoint_path(entrypoint)
+                 if path:
+-                    self.combo_box_initialize(path, None)
+-                    # Adds all files entrypoint paths that exists on disc
+-                    # into the combobox
+-                    self.advanced_search_initialize(path)
++                    self.combo_box_add(path, domain)
+                     self.installed_list.append(path)
+ 
+             self.loading += 1
+         loading_gui.hide()
++        self.entrycompletion_obj.set_model(self.application_liststore)
++        self.advanced_search_treeview.set_model(self.advanced_search_sort)
+ 
+         dic = {
+             "on_combo_button_clicked": self.open_combo_menu,
+@@ -553,7 +556,7 @@ class SELinuxGui():
+             "on_file_equiv_button_clicked": self.show_file_equiv_page,
+             "on_app/system_button_clicked": self.system_interface,
+             "on_app/users_button_clicked": self.users_interface,
+-            "on_main_advanced_label_button_press_event": self.advanced_label_main,
++            "on_show_advanced_search_window": self.on_show_advanced_search_window,
+ 
+             "on_Show_mislabeled_files_toggled": self.show_mislabeled_files,
+             "on_Browse_button_files_clicked": self.browse_for_files,
+@@ -569,8 +572,6 @@ class SELinuxGui():
+             "on_advanced_filter_entry_changed": self.get_advanced_filter_data,
+             "on_advanced_search_treeview_row_activated": self.advanced_item_selected,
+             "on_Select_advanced_search_clicked": self.advanced_item_button_push,
+-            "on_All_advanced_button_toggled": self.advanced_radio_select,
+-            "on_Installed_advanced_button_toggled": self.advanced_radio_select,
+             "on_info_button_button_press_event": self.on_help_button,
+             "on_back_button_clicked": self.on_help_back_clicked,
+             "on_forward_button_clicked": self.on_help_forward_clicked,
+@@ -676,9 +677,9 @@ class SELinuxGui():
+         self.module_dict = {}
+         for m in self.dbus.semodule_list().split("\n"):
+             mod = m.split()
+-            if len(mod) < 2:
++            if len(mod) < 3:
+                 continue
+-            self.module_dict[mod[0]] = {"version": mod[1], "Disabled": (len(mod) > 2)}
++            self.module_dict[mod[1]] = { "priority": mod[0], "Disabled" : (len(mod) > 3) }
+ 
+         self.enable_unconfined_button.set_active(not self.module_dict["unconfined"]["Disabled"])
+         self.enable_permissive_button.set_active(not self.module_dict["permissivedomains"]["Disabled"])
+@@ -711,7 +712,7 @@ class SELinuxGui():
+ 
+     def match_func(self, completion, key_string, iter, func_data):
+         try:
+-            if self.combobox_menu_model.get_value(iter, 0).find(key_string) != -1:
++            if self.application_liststore.get_value(iter, 0).find(key_string) != -1:
+                 return True
+             return False
+         except AttributeError:
+@@ -834,8 +835,7 @@ class SELinuxGui():
+             self.enforce_button = self.disabled_button_default
+ 
+     def populate_system_policy(self):
+-        selinux_path = selinux.selinux_path()
+-        types = map(lambda x: x[1], filter(lambda x: x[0] == selinux_path, os.walk(selinux_path)))[0]
++        types = next(os.walk(selinux.selinux_path(), topdown=True))[1]
+         types.sort()
+         ctr = 0
+         for item in types:
+@@ -922,11 +922,11 @@ class SELinuxGui():
+         self.ready_mouse()
+ 
+     def network_initialize(self, app):
+-        netd = sepolicy.network.get_network_connect(app, "tcp", "name_connect")
++        netd = sepolicy.network.get_network_connect(app, "tcp", "name_connect", check_bools=True)
+         self.net_update(app, netd, "tcp", OUTBOUND_PAGE, self.network_out_liststore)
+-        netd = sepolicy.network.get_network_connect(app, "tcp", "name_bind")
++        netd = sepolicy.network.get_network_connect(app, "tcp", "name_bind", check_bools=True)
+         self.net_update(app, netd, "tcp", INBOUND_PAGE, self.network_in_liststore)
+-        netd = sepolicy.network.get_network_connect(app, "udp", "name_bind")
++        netd = sepolicy.network.get_network_connect(app, "udp", "name_bind", check_bools=True)
+         self.net_update(app, netd, "udp", INBOUND_PAGE, self.network_in_liststore)
+ 
+     def network_initial_data_insert(self, model, ports, portType, protocol):
+@@ -962,12 +962,12 @@ class SELinuxGui():
+         iter = liststore.get_iter(index)
+         return liststore.get_value(iter, 0)
+ 
+-    def combo_box_initialize(self, val, desc):
++    def combo_box_add(self, val, val1):
+         if val is None:
+             return
+-        iter = self.combobox_menu_model.append()
+-        for f in val:
+-            self.combobox_menu_model.set_value(iter, 0, val)
++        iter = self.application_liststore.append()
++        self.application_liststore.set_value(iter, 0, val)
++        self.application_liststore.set_value(iter, 1, val1)
+ 
+     def select_type_more(self, *args):
+         app = self.moreTypes_treeview.get_selection()
+@@ -983,19 +983,18 @@ class SELinuxGui():
+         model, iter = row.get_selected()
+         iter = model.convert_iter_to_child_iter(iter)
+         iter = self.advanced_search_filter.convert_iter_to_child_iter(iter)
+-        app = self.advanced_search_liststore.get_value(iter, 1)
++        app = self.application_liststore.get_value(iter, 1)
+         if app is None:
+             return
+         self.advanced_filter_entry.set_text('')
+         self.advanced_search_window.hide()
+         self.reveal_advanced(self.main_advanced_label)
+         self.completion_entry.set_text(app)
+-        self.application_selected()
+ 
+     def advanced_item_selected(self, treeview, path, *args):
+         iter = self.advanced_search_filter.get_iter(path)
+         iter = self.advanced_search_filter.convert_iter_to_child_iter(iter)
+-        app = self.advanced_search_liststore.get_value(iter, 1)
++        app = self.application_liststore.get_value(iter, 1)
+         self.advanced_filter_entry.set_text('')
+         self.advanced_search_window.hide()
+         self.reveal_advanced(self.main_advanced_label)
+@@ -1004,7 +1003,7 @@ class SELinuxGui():
+ 
+     def find_application(self, app):
+         if app and len(app) > 0:
+-            for items in self.combobox_menu_model:
++            for items in self.application_liststore:
+                 if app == items[0]:
+                     return True
+         return False
+@@ -1066,9 +1065,9 @@ class SELinuxGui():
+         self.transitions_into_tab.set_label(_("Application Transitions Into '%s'" % app))
+         self.transitions_from_tab.set_label(_("Application Transitions From '%s'" % app))
+         self.transitions_file_tab.set_label(_("File Transitions From '%s'" % app))
+-        self.transitions_into_tab.set_tooltip_text(_("Executables which will transition to the '%s', when executing a selected domains entrypoint.") % app)
+-        self.transitions_from_tab.set_tooltip_text(_("Executables which will transition to a different domain, when the '%s' executes them.") % app)
+-        self.transitions_file_tab.set_tooltip_text(_("Files by '%s' will transitions to a different label." % app))
++        self.transitions_into_tab.set_tooltip_text(_("Executables which will transition to '%s', when executing selected domains entrypoint.") % app)
++        self.transitions_from_tab.set_tooltip_text(_("Executables which will transition to a different domain, when '%s' executes them.") % app)
++        self.transitions_file_tab.set_tooltip_text(_("Files by '%s' with transitions to a different label." % app))
+         self.transitions_radio_button.set_tooltip_text(_("Display applications that can transition into or out of the '%s'." % app))
+ 
+         self.application = app
+@@ -1290,11 +1289,11 @@ class SELinuxGui():
+             niter = self.transitions_from_treestore.append(iter)
+             # active[0][1] is either T or F (enabled is all the way at the top)
+             self.transitions_from_treestore.set_value(iter, 0, enabled[active[0][1]])
+-            markup = '<span foreground="blue"><u>%s</u></span>'
++            markup = ('<span foreground="blue"><u>','</u></span>')
+             if active[0][1]:
+-                self.transitions_from_treestore.set_value(niter, 2, (_("To disable this transition, go to the " + markup % _("Boolean section."))))
++                self.transitions_from_treestore.set_value(niter, 2, (_("To disable this transition, go to the %sBoolean section%s.") % markup))
+             else:
+-                self.transitions_from_treestore.set_value(niter, 2, (_("To enable this transition, go to the " + markup % _("Boolean section."))))
++                self.transitions_from_treestore.set_value(niter, 2, (_("To enable this transition, go to the %sBoolean section%s.") % markup))
+ 
+             # active[0][0] is the Bool Name
+             self.transitions_from_treestore.set_value(niter, 1, active[0][0])
+@@ -1377,8 +1376,8 @@ class SELinuxGui():
+                 self.treeview = self.network_in_treeview
+                 category = _("listen for inbound connections")
+ 
+-            self.add_button.set_tooltip_text(_("Add new port definition to which the '%(APP)s' domain is allowed to %s.") % {"APP": self.application, "PERM": category})
+-            self.delete_button.set_tooltip_text(_("Delete modified port definitions to which the '%(APP)s' domain is allowed to %s.") % {"APP": self.application, "PERM": category})
++            self.add_button.set_tooltip_text(_("Add new port definition to which the '%(APP)s' domain is allowed to %(PERM)s.") % {"APP": self.application, "PERM": category})
++            self.delete_button.set_tooltip_text(_("Delete modified port definitions to which the '%(APP)s' domain is allowed to %(PERM)s.") % {"APP": self.application, "PERM": category})
+             self.modify_button.set_tooltip_text(_("Modify port definitions to which the '%(APP)s' domain is allowed to %(PERM)s.") % {"APP": self.application, "PERM": category})
+ 
+         if self.transitions_radio_button.get_active():
+@@ -1598,8 +1597,8 @@ class SELinuxGui():
+             self.show_popup(self.login_popup_window)
+ 
+         if self.opage == FILE_EQUIV_PAGE:
+-            self.file_equiv_source_entry.set_text(self.file_equiv_liststore.get_value(iter, 0))
+-            self.file_equiv_dest_entry.set_text(self.file_equiv_liststore.get_value(iter, 1))
++            self.file_equiv_source_entry.set_text(self.unmarkup(self.file_equiv_liststore.get_value(iter, 0)))
++            self.file_equiv_dest_entry.set_text(self.unmarkup(self.file_equiv_liststore.get_value(iter, 1)))
+             self.file_equiv_label.set_text((_("Modify File Equivalency Mapping. Mapping will be created when update is applied.")))
+             self.file_equiv_popup_window.set_title(_("Modify SELinux File Equivalency"))
+             self.clear_entry = True
+@@ -1635,7 +1634,7 @@ class SELinuxGui():
+         self.files_type_combolist.clear()
+         self.files_class_combolist.clear()
+         compare = self.strip_domain(self.application)
+-        for d in self.completion_entry_model:
++        for d in self.application_liststore:
+             if d[0].startswith(compare) and d[0] != self.application and not d[0].startswith("httpd_sys"):
+                 exclude_list.append(self.strip_domain(d[0]))
+ 
+@@ -1714,10 +1713,10 @@ class SELinuxGui():
+ 
+         try:
+             if ipage == OUTBOUND_PAGE:
+-                netd = sepolicy.network.get_network_connect(self.application, "tcp", "name_connect")
++                netd = sepolicy.network.get_network_connect(self.application, "tcp", "name_connect", check_bools=True)
+             elif ipage == INBOUND_PAGE:
+-                netd = sepolicy.network.get_network_connect(self.application, "tcp", "name_bind")
+-                netd += sepolicy.network.get_network_connect(self.application, "udp", "name_bind")
++                netd = sepolicy.network.get_network_connect(self.application, "tcp", "name_bind", check_bools=True)
++                netd += sepolicy.network.get_network_connect(self.application, "udp", "name_bind", check_bools=True)
+ 
+             port_types = []
+             for k in netd.keys():
+@@ -2550,34 +2549,7 @@ class SELinuxGui():
+         self.network_mls_label.set_visible(advanced)
+         self.network_mls_entry.set_visible(advanced)
+ 
+-    def advanced_search_initialize(self, path):
+-        try:
+-            if path[0] == '/':
+-                domain = sepolicy.get_init_transtype(path)
+-            else:
+-                domain = path
+-        except IndexError:
+-            return
+-        except OSError:
+-            return
+-        iter = self.advanced_search_liststore.append()
+-        self.advanced_search_liststore.set_value(iter, 0, path)
+-        self.advanced_search_liststore.set_value(iter, 1, domain)
+-        user_types = sepolicy.get_user_types()
+-        if domain in user_types + ['initrc_t']:
+-            return
+-
+-        entrypoints = sepolicy.get_entrypoints(domain)
+-        # From entry_point = 0 to the number of keys in the dic
+-        for exe in entrypoints:
+-            if len(entrypoints[exe]):
+-                file_class = entrypoints[exe][1]
+-                for path in entrypoints[exe][0]:
+-                    iter = self.advanced_search_liststore.append()
+-                    self.advanced_search_liststore.set_value(iter, 1, domain)
+-                    self.advanced_search_liststore.set_value(iter, 0, path)
+-
+-    def advanced_label_main(self, label, *args):
++    def on_show_advanced_search_window(self, label, *args):
+         if label.get_text() == ADVANCED_SEARCH_LABEL[1]:
+             label.set_text(ADVANCED_SEARCH_LABEL[0])
+             self.close_popup()
+@@ -2585,33 +2557,18 @@ class SELinuxGui():
+             label.set_text(ADVANCED_SEARCH_LABEL[1])
+             self.show_popup(self.advanced_search_window)
+ 
+-    def advanced_radio_select(self, button):
+-        label = ""
+-        if button.get_active():
+-            label = button.get_label()
+-        if label == '':
+-            return
+-        self.advanced_search_liststore.clear()
+-        if label == "All":
+-            for items in self.all_list:
+-                self.advanced_search_initialize(items)
+-                self.idle_func()
+-
+-        elif label == "Installed":
+-            if self.installed_list == []:
+-                return
+-            for items in self.installed_list:
+-                self.advanced_search_initialize(items)
+-                self.idle_func()
+-
+     def set_enforce_text(self, value):
+         if value:
+             self.status_bar.push(self.context_id, _("System Status: Enforcing"))
++            self.current_status_enforcing.set_active(True)
+         else:
+             self.status_bar.push(self.context_id, _("System Status: Permissive"))
+-        self.current_status_permissive.set_active(True)
++            self.current_status_permissive.set_active(True)
+ 
+     def set_enforce(self, button):
++        if not self.finish_init:
++            return
++
+         self.dbus.setenforce(button.get_active())
+         self.set_enforce_text(button.get_active())
+ 
+diff --git policycoreutils-2.6/sepolicy/sepolicy/interface.py policycoreutils-2.6/sepolicy/sepolicy/interface.py
+index c2cb971..8956f39 100644
+--- policycoreutils-2.6/sepolicy/sepolicy/interface.py
++++ policycoreutils-2.6/sepolicy/sepolicy/interface.py
+@@ -192,10 +192,13 @@ def generate_compile_te(interface, idict, name="compiletest"):
+ def get_xml_file(if_file):
+     """ Returns xml format of interfaces for given .if policy file"""
+     import os
+-    import commands
++    try:
++            from commands import getstatusoutput
++    except ImportError:
++            from subprocess import getstatusoutput
+     basedir = os.path.dirname(if_file) + "/"
+     filename = os.path.basename(if_file).split(".")[0]
+-    rc, output = commands.getstatusoutput("python /usr/share/selinux/devel/include/support/segenxml.py -w -m %s" % basedir + filename)
++    rc, output = getstatusoutput("python /usr/share/selinux/devel/include/support/segenxml.py -w -m %s" % basedir + filename)
+     if rc != 0:
+         sys.stderr.write("\n Could not proceed selected interface file.\n")
+         sys.stderr.write("\n%s" % output)
+@@ -208,7 +211,10 @@ def interface_compile_test(interface, path="/usr/share/selinux/devel/policy.xml"
+     exclude_interfaces = ["userdom", "kernel", "corenet", "files", "dev"]
+     exclude_interface_type = ["template"]
+ 
+-    import commands
++    try:
++            from commands import getstatusoutput
++    except ImportError:
++            from subprocess import getstatusoutput
+     import os
+     policy_files = {'pp': "compiletest.pp", 'te': "compiletest.te", 'fc': "compiletest.fc", 'if': "compiletest.if"}
+     idict = get_interface_dict(path)
+@@ -219,7 +225,7 @@ def interface_compile_test(interface, path="/usr/share/selinux/devel/policy.xml"
+             fd = open(policy_files['te'], "w")
+             fd.write(generate_compile_te(interface, idict))
+             fd.close()
+-            rc, output = commands.getstatusoutput("make -f /usr/share/selinux/devel/Makefile %s" % policy_files['pp'])
++            rc, output = getstatusoutput("make -f /usr/share/selinux/devel/Makefile %s" % policy_files['pp'])
+             if rc != 0:
+                 sys.stderr.write(output)
+                 sys.stderr.write(_("\nCompile test for %s failed.\n") % interface)
+diff --git policycoreutils-2.6/sepolicy/sepolicy/manpage.py policycoreutils-2.6/sepolicy/sepolicy/manpage.py
+index 7365f93..703cce2 100755
+--- policycoreutils-2.6/sepolicy/sepolicy/manpage.py
++++ policycoreutils-2.6/sepolicy/sepolicy/manpage.py
+@@ -27,11 +27,17 @@ __all__ = ['ManPage', 'HTMLManPages', 'manpage_domains', 'manpage_roles', 'gen_d
+ import string
+ import selinux
+ import sepolicy
+-import commands
+ import os
+ import time
+ 
+-equiv_dict = {"smbd": ["samba"], "httpd": ["apache"], "virtd": ["virt", "libvirt", "svirt", "svirt_tcg", "svirt_lxc_t", "svirt_lxc_net_t"], "named": ["bind"], "fsdaemon": ["smartmon"], "mdadm": ["raid"]}
++typealias_types = {
++"antivirus_t":("amavis_t", "clamd_t", "clamscan_t", "freshclam_t"),
++"cluster_t":("rgmanager_t", "corosync_t", "aisexec_t", "pacemaker_t"),
++"svirt_t":("qemu_t"),
++"httpd_t":("phpfpm_t"),
++}
++
++equiv_dict = {"smbd": ["samba"], "httpd": ["apache"], "virtd": ["virt", "libvirt"], "named": ["bind"], "fsdaemon": ["smartmon"], "mdadm": ["raid"]}
+ 
+ equiv_dirs = ["/var"]
+ modules_dict = None
+@@ -88,11 +94,10 @@ def get_all_users_info():
+ 
+ all_entrypoints = None
+ 
+-
+ def get_entrypoints():
+     global all_entrypoints
+     if not all_entrypoints:
+-        all_entrypoints = sepolicy.info(sepolicy.ATTRIBUTE, "entry_type")[0]["types"]
++        all_entrypoints = next(sepolicy.info(sepolicy.ATTRIBUTE, "entry_type"))["types"]
+     return all_entrypoints
+ 
+ domains = None
+@@ -120,8 +125,33 @@ def gen_domains():
+     domains.sort()
+     return domains
+ 
+-types = None
+ 
++exec_types = None
++
++def _gen_exec_types():
++    global exec_types
++    if exec_types is None:
++        exec_types = next(sepolicy.info(sepolicy.ATTRIBUTE, "exec_type"))["types"]
++    return exec_types
++
++entry_types = None
++
++def _gen_entry_types():
++    global entry_types
++    if entry_types is None:
++        entry_types = next(sepolicy.info(sepolicy.ATTRIBUTE, "entry_type"))["types"]
++    return entry_types
++
++mcs_constrained_types = None
++
++def _gen_mcs_constrained_types():
++    global mcs_constrained_types
++    if mcs_constrained_types is None:
++        mcs_constrained_types = next(sepolicy.info(sepolicy.ATTRIBUTE, "mcs_constrained_type"))
++    return mcs_constrained_types
++
++
++types = None
+ 
+ def _gen_types():
+     global types
+@@ -144,10 +174,6 @@ def prettyprint(f, trim):
+ manpage_domains = []
+ manpage_roles = []
+ 
+-fedora_releases = ["Fedora17", "Fedora18"]
+-rhel_releases = ["RHEL6", "RHEL7"]
+-
+-
+ def get_alphabet_manpages(manpage_list):
+     alphabet_manpages = dict.fromkeys(string.ascii_letters, [])
+     for i in string.ascii_letters:
+@@ -162,7 +188,11 @@ def get_alphabet_manpages(manpage_list):
+ 
+ 
+ def convert_manpage_to_html(html_manpage, manpage):
+-    rc, output = commands.getstatusoutput("/usr/bin/groff -man -Thtml %s 2>/dev/null" % manpage)
++    try:
++            from commands import getstatusoutput
++    except ImportError:
++            from subprocess import getstatusoutput
++    rc, output = getstatusoutput("/usr/bin/groff -man -Thtml %s 2>/dev/null" % manpage)
+     if rc == 0:
+         print(html_manpage, "has been created")
+         fd = open(html_manpage, 'w')
+@@ -173,7 +203,7 @@ def convert_manpage_to_html(html_manpage, manpage):
+ class HTMLManPages:
+ 
+     """
+-            Generate a HHTML Manpages on an given SELinux domains
++            Generate a HTML Manpages on an given SELinux domains
+     """
+ 
+     def __init__(self, manpage_roles, manpage_domains, path, os_version):
+@@ -181,9 +211,9 @@ class HTMLManPages:
+         self.manpage_domains = get_alphabet_manpages(manpage_domains)
+         self.os_version = os_version
+         self.old_path = path + "/"
+-        self.new_path = self.old_path + self.os_version + "/"
++        self.new_path = self.old_path
+ 
+-        if self.os_version in fedora_releases or rhel_releases:
++        if self.os_version:
+             self.__gen_html_manpages()
+         else:
+             print("SELinux HTML man pages can not be generated for this %s" % os_version)
+@@ -192,7 +222,6 @@ class HTMLManPages:
+     def __gen_html_manpages(self):
+         self._write_html_manpage()
+         self._gen_index()
+-        self._gen_body()
+         self._gen_css()
+ 
+     def _write_html_manpage(self):
+@@ -202,75 +231,29 @@ class HTMLManPages:
+         for domain in self.manpage_domains.values():
+             if len(domain):
+                 for d in domain:
+-                    convert_manpage_to_html((self.new_path + d.split("_selinux")[0] + ".html"), self.old_path + d)
++                    convert_manpage_to_html((self.new_path + d.rsplit("_selinux", 1)[0] + ".html"), self.old_path + d)
+ 
+         for role in self.manpage_roles.values():
+             if len(role):
+                 for r in role:
+-                    convert_manpage_to_html((self.new_path + r.split("_selinux")[0] + ".html"), self.old_path + r)
++                    convert_manpage_to_html((self.new_path + r.rsplit("_selinux", 1)[0] + ".html"), self.old_path + r)
+ 
+     def _gen_index(self):
+-        index = self.old_path + "index.html"
+-        fd = open(index, 'w')
+-        fd.write("""
+-<html>
+-<head>
+-    <link rel=stylesheet type="text/css" href="style.css" title="style">
+-    <title>SELinux man pages online</title>
+-</head>
+-<body>
+-<h1>SELinux man pages</h1>
+-<br></br>
+-Fedora or Red Hat Enterprise Linux Man Pages.</h2>
+-<br></br>
+-<hr>
+-<h3>Fedora</h3>
+-<table><tr>
+-<td valign="middle">
+-</td>
+-</tr></table>
+-<pre>
+-""")
+-        for f in fedora_releases:
+-            fd.write("""
+-<a href=%s/%s.html>%s</a> - SELinux man pages for %s """ % (f, f, f, f))
+-
+-        fd.write("""
+-</pre>
+-<hr>
+-<h3>RHEL</h3>
+-<table><tr>
+-<td valign="middle">
+-</td>
+-</tr></table>
+-<pre>
+-""")
+-        for r in rhel_releases:
+-            fd.write("""
+-<a href=%s/%s.html>%s</a> - SELinux man pages for %s """ % (r, r, r, r))
+-
+-        fd.write("""
+-</pre>
+-	""")
+-        fd.close()
+-        print("%s has been created") % index
+-
+-    def _gen_body(self):
+         html = self.new_path + self.os_version + ".html"
+         fd = open(html, 'w')
+         fd.write("""
+ <html>
+ <head>
+-	<link rel=stylesheet type="text/css" href="../style.css" title="style">
+-	<title>Linux man-pages online for Fedora18</title>
++	<link rel=stylesheet type="text/css" href="style.css" title="style">
++	<title>SELinux man pages</title>
+ </head>
+ <body>
+-<h1>SELinux man pages for Fedora18</h1>
++<h1>SELinux man pages for %s</h1>
+ <hr>
+ <table><tr>
+ <td valign="middle">
+ <h3>SELinux roles</h3>
+-""")
++""" % self.os_version)
+         for letter in self.manpage_roles:
+             if len(self.manpage_roles[letter]):
+                 fd.write("""
+@@ -287,7 +270,7 @@ Fedora or Red Hat Enterprise Linux Man Pages.</h2>
+             if len(self.manpage_roles[letter]):
+                 rolename_body += "<p>"
+                 for r in self.manpage_roles[letter]:
+-                    rolename = r.split("_selinux")[0]
++                    rolename = r.rsplit("_selinux", 1)[0]
+                     rolename_body += "<a name=%s_role></a><a href=%s.html>%s_selinux(8)</a> - Security Enhanced Linux Policy for the %s SELinux user\n" % (letter, rolename, rolename, rolename)
+ 
+         fd.write("""%s
+@@ -314,7 +297,7 @@ Fedora or Red Hat Enterprise Linux Man Pages.</h2>
+             if len(self.manpage_domains[letter]):
+                 domainname_body += "<p>"
+                 for r in self.manpage_domains[letter]:
+-                    domainname = r.split("_selinux")[0]
++                    domainname = r.rsplit("_selinux", 1)[0]
+                     domainname_body += "<a name=%s_domain></a><a href=%s.html>%s_selinux(8)</a> - Security Enhanced Linux Policy for the %s SELinux processes\n" % (letter, domainname, domainname, domainname)
+ 
+         fd.write("""%s
+@@ -414,6 +397,9 @@ class ManPage:
+         self.all_file_types = sepolicy.get_all_file_types()
+         self.role_allows = sepolicy.get_all_role_allows()
+         self.types = _gen_types()
++        self.exec_types = _gen_exec_types()
++        self.entry_types = _gen_entry_types()
++        self.mcs_constrained_types = _gen_mcs_constrained_types()
+ 
+         if self.source_files:
+             self.fcpath = self.root + "file_contexts"
+@@ -485,7 +471,7 @@ class ManPage:
+             self.desc = "%s user role" % self.domainname
+ 
+         if self.domainname in self.all_users:
+-            self.attributes = sepolicy.info(sepolicy.TYPE, (self.type))[0]["attributes"]
++            self.attributes = next(sepolicy.info(sepolicy.TYPE, (self.type)))["attributes"]
+             self._user_header()
+             self._user_attribute()
+             self._can_sudo()
+@@ -501,6 +487,7 @@ class ManPage:
+             self._booleans()
+ 
+         self._port_types()
++        self._mcs_types()
+         self._writes()
+         self._footer()
+ 
+@@ -519,11 +506,22 @@ class ManPage:
+         self._get_ptypes()
+ 
+         for domain_type in self.ptypes:
+-            self.attributes[domain_type] = sepolicy.info(sepolicy.TYPE, ("%s") % domain_type)[0]["attributes"]
++            try:
++                if typealias_types[domain_type]:
++                    fd = self.fd
++                    man_page_path =  self.man_page_path
++                    for t in typealias_types[domain_type]:
++                        self._typealias_gen_man(t)
++                    self.fd = fd
++                    self.man_page_path = man_page_path
++            except KeyError:
++                continue;
++            self.attributes[domain_type] = next(sepolicy.info(sepolicy.TYPE, ("%s") % domain_type))["attributes"]
+ 
+         self._header()
+         self._entrypoints()
+         self._process_types()
++        self._mcs_types()
+         self._booleans()
+         self._nsswitch_domain()
+         self._port_types()
+@@ -537,6 +535,34 @@ class ManPage:
+             if f.startswith(self.short_name) or f.startswith(self.domainname):
+                 self.ptypes.append(f)
+ 
++    def _typealias_gen_man(self, t):
++        self.man_page_path = "%s/%s_selinux.8" % (self.path, t[:-2])
++        self.ports = []
++        self.booltext = ""
++        self.fd = open(self.man_page_path, 'w')
++        self._typealias(t[:-2])
++        self._footer()
++        self.fd.close()
++
++    def _typealias(self,typealias):
++        self.fd.write('.TH  "%(typealias)s_selinux"  "8"  "%(date)s" "%(typealias)s" "SELinux Policy %(typealias)s"'
++                 % {'typealias':typealias, 'date': time.strftime("%y-%m-%d")})
++        self.fd.write(r"""
++.SH "NAME"
++%(typealias)s_selinux \- Security Enhanced Linux Policy for the %(typealias)s processes
++.SH "DESCRIPTION"
++
++%(typealias)s_t SELinux domain type is now associated with %(domainname)s domain type (%(domainname)s_t). 
++""" % {'typealias':typealias, 'domainname':self.domainname})
++
++        self.fd.write(r"""
++Please see 
++
++.B %(domainname)s_selinux 
++
++man page for more details.
++"""  % {'domainname':self.domainname})
++
+     def _header(self):
+         self.fd.write('.TH  "%(domainname)s_selinux"  "8"  "%(date)s" "%(domainname)s" "SELinux Policy %(domainname)s"'
+                       % {'domainname': self.domainname, 'date': time.strftime("%y-%m-%d")})
+@@ -686,10 +712,13 @@ Default Defined Ports:""")
+ 
+     def _file_context(self):
+         flist = []
++        flist_non_exec = []
+         mpaths = []
+         for f in self.all_file_types:
+             if f.startswith(self.domainname):
+                 flist.append(f)
++                if not f in self.exec_types or not f in self.entry_types:
++                    flist_non_exec.append(f)
+                 if f in self.fcdict:
+                     mpaths = mpaths + self.fcdict[f]["regex"]
+         if len(mpaths) == 0:
+@@ -741,19 +770,20 @@ SELinux %(domainname)s policy is very flexible allowing users to setup their %(d
+ .PP
+ """ % {'domainname': self.domainname, 'equiv': e, 'alt': e.split('/')[-1]})
+ 
+-        self.fd.write(r"""
++        if flist_non_exec:
++                self.fd.write(r"""
+ .PP
+ .B STANDARD FILE CONTEXT
+ 
+ SELinux defines the file context types for the %(domainname)s, if you wanted to
+ store files with these types in a diffent paths, you need to execute the semanage command to sepecify alternate labeling and then use restorecon to put the labels on disk.
+ 
+-.B semanage fcontext -a -t %(type)s '/srv/%(domainname)s/content(/.*)?'
++.B semanage fcontext -a -t %(type)s '/srv/my%(domainname)s_content(/.*)?'
+ .br
+ .B restorecon -R -v /srv/my%(domainname)s_content
+ 
+ Note: SELinux often uses regular expressions to specify labels that match multiple files.
+-""" % {'domainname': self.domainname, "type": flist[0]})
++""" % {'domainname': self.domainname, "type": flist_non_exec[-1]})
+ 
+         self.fd.write(r"""
+ .I The following file types are defined for %(domainname)s:
+@@ -889,9 +919,8 @@ selinux(8), %s(8), semanage(8), restorecon(8), chcon(1), sepolicy(8)
+         return True
+ 
+     def _entrypoints(self):
+-        try:
+-            entrypoints = map(lambda x: x['target'], sepolicy.search([sepolicy.ALLOW], {'source': self.type, 'permlist': ['entrypoint'], 'class': 'file'}))
+-        except:
++        entrypoints = [x['target'] for x in sepolicy.search([sepolicy.ALLOW], {'source': self.type, 'permlist': ['entrypoint'], 'class': 'file'})]
++        if len(entrypoints) == 0:
+             return
+ 
+         self.fd.write("""
+@@ -920,6 +949,16 @@ All executeables with the default executable label, usually stored in /usr/bin a
+         self.fd.write("""
+ %s""" % ", ".join(paths))
+ 
++    def _mcs_types(self):
++        if self.type not in self.mcs_constrained_types['types']:
++            return
++        self.fd.write ("""
++.SH "MCS Constrained"
++The SELinux process type %(type)s_t is an MCS (Multi Category Security) constrained type.  Sometimes this separation is referred to as sVirt. These types are usually used for securing multi-tenant environments, such as virtualization, containers or separation of users.  The tools used to launch MCS types, pick out a different MCS label for each process group.
++
++For example one process might be launched with %(type)s_t:s0:c1,c2, and another process launched with %(type)s_t:s0:c3,c4. The SELinux kernel only allows these processes can only write to content with a matching MCS label, or a MCS Label of s0. A process running with the MCS level of s0:c1,c2 is not allowed to write to content with the MCS label of s0:c3,c4
++""" % {'type': self.domainname})
++
+     def _writes(self):
+         permlist = sepolicy.search([sepolicy.ALLOW], {'source': self.type, 'permlist': ['open', 'write'], 'class': 'file'})
+         if permlist is None or len(permlist) == 0:
+@@ -1156,7 +1195,7 @@ Three things can happen when %(type)s attempts to execute a program.
+ 
+ Execute the following to see the types that the SELinux user %(type)s can execute without transitioning:
+ 
+-.B search -A -s %(type)s -c file -p execute_no_trans
++.B sesearch -A -s %(type)s -c file -p execute_no_trans
+ 
+ .TP
+ 
+@@ -1164,7 +1203,7 @@ Execute the following to see the types that the SELinux user %(type)s can execut
+ 
+ Execute the following to see the types that the SELinux user %(type)s can execute and transition:
+ 
+-.B $ search -A -s %(type)s -c process -p transition
++.B $ sesearch -A -s %(type)s -c process -p transition
+ 
+ """ % {'user': self.domainname, 'type': self.type})
+ 
+diff --git policycoreutils-2.6/sepolicy/sepolicy/network.py policycoreutils-2.6/sepolicy/sepolicy/network.py
+index c4d95da..115f6b8 100755
+--- policycoreutils-2.6/sepolicy/sepolicy/network.py
++++ policycoreutils-2.6/sepolicy/sepolicy/network.py
+@@ -23,20 +23,20 @@
+ import sepolicy
+ 
+ 
+-def get_types(src, tclass, perm):
++def get_types(src, tclass, perm, check_bools=False):
+     allows = sepolicy.search([sepolicy.ALLOW], {sepolicy.SOURCE: src, sepolicy.CLASS: tclass, sepolicy.PERMS: perm})
+     nlist = []
+     if allows:
+-        for i in map(lambda y: y[sepolicy.TARGET], filter(lambda x: set(perm).issubset(x[sepolicy.PERMS]), allows)):
++        for i in map(lambda y: y[sepolicy.TARGET], filter(lambda x: set(perm).issubset(x[sepolicy.PERMS]) and (not check_bools or x["enabled"]), allows)):
+             if i not in nlist:
+                 nlist.append(i)
+     return nlist
+ 
+ 
+-def get_network_connect(src, protocol, perm):
++def get_network_connect(src, protocol, perm, check_bools=False):
+     portrecs, portrecsbynum = sepolicy.gen_port_dict()
+     d = {}
+-    tlist = get_types(src, "%s_socket" % protocol, [perm])
++    tlist = get_types(src, "%s_socket" % protocol, [perm], check_bools)
+     if len(tlist) > 0:
+         d[(src, protocol, perm)] = []
+         for i in tlist:
+diff --git policycoreutils-2.6/sepolicy/sepolicy/sepolicy.glade policycoreutils-2.6/sepolicy/sepolicy/sepolicy.glade
+index 1275c7f..8f6ad65 100644
+--- policycoreutils-2.6/sepolicy/sepolicy/sepolicy.glade
++++ policycoreutils-2.6/sepolicy/sepolicy/sepolicy.glade
+@@ -2,7 +2,7 @@
+ <!-- Generated with glade 3.16.0 on Fri Oct 11 08:24:19 2013 -->
+ <interface>
+   <!-- interface-requires gtk+ 3.8 -->
+-  <object class="GtkListStore" id="Advanced_search_liststore">
++  <object class="GtkListStore" id="application_liststore">
+     <columns>
+       <!-- column-name Application -->
+       <column type="gchararray"/>
+@@ -82,7 +82,7 @@
+             <attributes>
+               <attribute name="foreground" value="#00004e4e9999"/>
+             </attributes>
+-            <signal name="button-press-event" handler="on_main_advanced_label_button_press_event" swapped="no"/>
++            <signal name="button-press-event" handler="on_show_advanced_search_window" swapped="no"/>
+           </object>
+           <packing>
+             <property name="expand">True</property>
+@@ -225,7 +225,7 @@
+     </child>
+   </object>
+   <object class="GtkTreeModelFilter" id="advanced_filter">
+-    <property name="child_model">Advanced_search_liststore</property>
++    <property name="child_model">application_liststore</property>
+   </object>
+   <object class="GtkTreeModelSort" id="advanced_sort">
+     <property name="model">advanced_filter</property>
+@@ -256,24 +256,6 @@
+   <object class="GtkTreeModelSort" id="application_files_sort">
+     <property name="model">application_files_filter</property>
+   </object>
+-  <object class="GtkListStore" id="application_liststore">
+-    <columns>
+-      <!-- column-name Application -->
+-      <column type="gchararray"/>
+-    </columns>
+-  </object>
+-  <object class="GtkTreeModelFilter" id="application_filter">
+-    <property name="child_model">application_liststore</property>
+-  </object>
+-  <object class="GtkTreeModelSort" id="application_sort">
+-    <property name="model">application_filter</property>
+-  </object>
+-  <object class="GtkListStore" id="application_tree_list">
+-    <columns>
+-      <!-- column-name Process -->
+-      <column type="gchararray"/>
+-    </columns>
+-  </object>
+   <object class="GtkListStore" id="boolean_liststore">
+     <columns>
+       <!-- column-name Active -->
+@@ -473,7 +455,7 @@
+             <property name="can_focus">False</property>
+             <property name="xalign">0</property>
+             <property name="xpad">10</property>
+-            <property name="label" translatable="yes">Add file Equivilence Mapping.  Mapping will be created when Update is applied.</property>
++            <property name="label" translatable="yes">Add file Equivalence Mapping.  Mapping will be created when Update is applied.</property>
+             <property name="justify">fill</property>
+             <property name="wrap">True</property>
+           </object>
+@@ -823,7 +805,7 @@
+                         <property name="visible">True</property>
+                         <property name="can_focus">True</property>
+                         <property name="receives_default">False</property>
+-                        <property name="tooltip_text" translatable="yes">Select Make Path Recursive iff you want to apply this label to all children of the specified directory path. objects under the directory to have this label.</property>
++                        <property name="tooltip_text" translatable="yes">Select Make Path Recursive if you want to apply this label to all children of the specified directory path. objects under the directory to have this label.</property>
+                         <property name="xalign">0.5</property>
+                         <property name="draw_indicator">True</property>
+                         <signal name="toggled" handler="on_make_path_recursive_toggled" swapped="no"/>
+@@ -1061,7 +1043,7 @@
+               <object class="GtkImage" id="help_image">
+                 <property name="visible">True</property>
+                 <property name="can_focus">False</property>
+-                <property name="pixbuf">images/booleans.png</property>
++                <property name="pixbuf">help/booleans.png</property>
+               </object>
+               <packing>
+                 <property name="expand">False</property>
+@@ -2948,7 +2930,7 @@ Enabled</property>
+                                     <property name="tooltip_text" translatable="yes">Executables which will transition to a different domain, when the 'selected domain' executes them.</property>
+                                     <property name="xpad">1</property>
+                                     <property name="ypad">1</property>
+-                                    <property name="label" translatable="yes">Applicaton Transitions From 'select domain'</property>
++                                    <property name="label" translatable="yes">Application Transitions From 'select domain'</property>
+                                   </object>
+                                   <packing>
+                                     <property name="position">1</property>
+@@ -3909,7 +3891,7 @@ allow alternative access control.</property>
+                                         <property name="visible">True</property>
+                                         <property name="can_focus">True</property>
+                                         <property name="receives_default">False</property>
+-                                        <property name="tooltip_text" translatable="yes">An permissive domain is a process label that allows the process to do what it wants, with SELinux only logging the denials, but not enforcing them.  Usually permissive domains indicate experimental policy, disabling the module could cause SELinux to deny access to a domain, that should be allowed.</property>
++                                        <property name="tooltip_text" translatable="yes">A permissive domain is a process label that allows the process to do what it wants, with SELinux only logging the denials, but not enforcing them.  Usually permissive domains indicate experimental policy, disabling the module could cause SELinux to deny access to a domain, that should be allowed.</property>
+                                         <property name="xalign">0</property>
+                                         <property name="draw_indicator">True</property>
+                                         <property name="group">enable_permissive</property>
+@@ -3926,7 +3908,7 @@ allow alternative access control.</property>
+                                         <property name="visible">True</property>
+                                         <property name="can_focus">True</property>
+                                         <property name="receives_default">False</property>
+-                                        <property name="tooltip_text" translatable="yes">An permissive domain is a process label that allows the process to do what it wants, with SELinux only logging the denials, but not enforcing them.  Usually permissive domains indicate experimental policy, disabling the module could cause SELinux to deny access to a domain, that should be allowed.</property>
++                                        <property name="tooltip_text" translatable="yes">A permissive domain is a process label that allows the process to do what it wants, with SELinux only logging the denials, but not enforcing them.  Usually permissive domains indicate experimental policy, disabling the module could cause SELinux to deny access to a domain, that should be allowed.</property>
+                                         <property name="xalign">0</property>
+                                         <property name="active">True</property>
+                                         <property name="draw_indicator">True</property>
+@@ -3989,7 +3971,7 @@ allow alternative access control.</property>
+                                         <property name="visible">True</property>
+                                         <property name="can_focus">True</property>
+                                         <property name="receives_default">False</property>
+-                                        <property name="tooltip_text" translatable="yes">An permissive domain is a process label that allows the process to do what it wants, with SELinux only logging the denials, but not enforcing them.  Usually permissive domains indicate experimental policy, disabling the module could cause SELinux to deny access to a domain, that should be allowed.</property>
++                                        <property name="tooltip_text" translatable="yes">A permissive domain is a process label that allows the process to do what it wants, with SELinux only logging the denials, but not enforcing them.  Usually permissive domains indicate experimental policy, disabling the module could cause SELinux to deny access to a domain, that should be allowed.</property>
+                                         <property name="xalign">0</property>
+                                         <property name="active">True</property>
+                                         <property name="draw_indicator">True</property>
+@@ -4328,46 +4310,7 @@ allow alternative access control.</property>
+                 <property name="position">0</property>
+               </packing>
+             </child>
+-            <child>
+-              <object class="GtkRadioButton" id="All_advanced_button">
+-                <property name="label" translatable="yes">All</property>
+-                <property name="visible">True</property>
+-                <property name="can_focus">True</property>
+-                <property name="receives_default">False</property>
+-                <property name="xalign">0.5</property>
+-                <property name="active">True</property>
+-                <property name="draw_indicator">True</property>
+-                <signal name="toggled" handler="on_All_advanced_button_toggled" swapped="no"/>
+-              </object>
+-              <packing>
+-                <property name="expand">True</property>
+-                <property name="fill">True</property>
+-                <property name="position">1</property>
+-              </packing>
+-            </child>
+-            <child>
+-              <object class="GtkRadioButton" id="Installed_advanced_button">
+-                <property name="label" translatable="yes">Installed</property>
+-                <property name="visible">True</property>
+-                <property name="can_focus">True</property>
+-                <property name="receives_default">False</property>
+-                <property name="xalign">0.5</property>
+-                <property name="draw_indicator">True</property>
+-                <property name="group">All_advanced_button</property>
+-                <signal name="toggled" handler="on_Installed_advanced_button_toggled" swapped="no"/>
+-              </object>
+-              <packing>
+-                <property name="expand">True</property>
+-                <property name="fill">True</property>
+-                <property name="position">2</property>
+-              </packing>
+-            </child>
+           </object>
+-          <packing>
+-            <property name="expand">False</property>
+-            <property name="fill">True</property>
+-            <property name="position">0</property>
+-          </packing>
+         </child>
+         <child>
+           <object class="GtkScrolledWindow" id="scrolledwindow11">
+@@ -4377,7 +4320,6 @@ allow alternative access control.</property>
+               <object class="GtkTreeView" id="advanced_search_treeview">
+                 <property name="visible">True</property>
+                 <property name="can_focus">True</property>
+-                <property name="model">advanced_sort</property>
+                 <property name="enable_search">False</property>
+                 <signal name="row-activated" handler="on_advanced_search_treeview_row_activated" swapped="no"/>
+                 <child internal-child="selection">
+@@ -4788,7 +4730,7 @@ allow alternative access control.</property>
+             <property name="can_focus">False</property>
+             <property name="xalign">0</property>
+             <property name="xpad">10</property>
+-            <property name="label" translatable="yes">Select file equivalence labeling to delete.File equivalence labeling will be deleted when update is applied.</property>
++            <property name="label" translatable="yes">Select file equivalence labeling to delete. File equivalence labeling will be deleted when update is applied.</property>
+             <property name="justify">fill</property>
+             <property name="wrap">True</property>
+           </object>
+diff --git policycoreutils-2.6/sepolicy/sepolicy/templates/executable.py policycoreutils-2.6/sepolicy/sepolicy/templates/executable.py
+index 4b9534d..f267993 100644
+--- policycoreutils-2.6/sepolicy/sepolicy/templates/executable.py
++++ policycoreutils-2.6/sepolicy/sepolicy/templates/executable.py
+@@ -86,6 +86,7 @@ roleattribute system_r TEMPLATETYPE_roles;
+ type TEMPLATETYPE_t;
+ type TEMPLATETYPE_exec_t;
+ application_domain(TEMPLATETYPE_t, TEMPLATETYPE_exec_t)
++role TEMPLATETYPE_roles types TEMPLATETYPE_t;
+ 
+ permissive TEMPLATETYPE_t;
+ """
+@@ -219,7 +220,7 @@ if_program_rules="""
+ 
+ ########################################
+ ## <summary>
+-##	Execute TEMPLATE in the TEMPLATETYPE domin.
++##	Execute TEMPLATETYPE_exec_t in the TEMPLATETYPE domain.
+ ## </summary>
+ ## <param name=\"domain\">
+ ## <summary>
+@@ -235,6 +236,25 @@ interface(`TEMPLATETYPE_domtrans',`
+ 	corecmd_search_bin($1)
+ 	domtrans_pattern($1, TEMPLATETYPE_exec_t, TEMPLATETYPE_t)
+ ')
++
++######################################
++## <summary>
++##	Execute TEMPLATETYPE in the caller domain.
++## </summary>
++## <param name="domain">
++##	<summary>
++##	Domain allowed access.
++##	</summary>
++## </param>
++#
++interface(`TEMPLATETYPE_exec',`
++	gen_require(`
++		type TEMPLATETYPE_exec_t;
++	')
++
++	corecmd_search_bin($1)
++	can_exec($1, TEMPLATETYPE_exec_t)
++')
+ """
+ 
+ if_user_program_rules="""
+@@ -418,8 +438,12 @@ interface(`TEMPLATETYPE_admin',`
+ if_middle_admin="""
+ 	')
+ 
+-	allow $1 TEMPLATETYPE_t:process { ptrace signal_perms };
++	allow $1 TEMPLATETYPE_t:process { signal_perms };
+ 	ps_process_pattern($1, TEMPLATETYPE_t)
++
++    tunable_policy(`deny_ptrace',`',`
++        allow $1 TEMPLATETYPE_t:process ptrace;
++    ')
+ """
+ 
+ if_initscript_admin_types="""
+diff --git policycoreutils-2.6/setfiles/.gitignore policycoreutils-2.6/setfiles/.gitignore
+index 583eb6c..5e899c9 100644
+--- policycoreutils-2.6/setfiles/.gitignore
++++ policycoreutils-2.6/setfiles/.gitignore
+@@ -1,2 +1 @@
+-restorecon.8.man
+ setfiles.8.man
+diff --git policycoreutils-2.6/setfiles/Makefile policycoreutils-2.6/setfiles/Makefile
+index 43364f9..92300c9 100644
+--- policycoreutils-2.6/setfiles/Makefile
++++ policycoreutils-2.6/setfiles/Makefile
+@@ -5,7 +5,6 @@ MANDIR = $(PREFIX)/share/man
+ LIBDIR ?= $(PREFIX)/lib
+ AUDITH = $(shell ls /usr/include/libaudit.h 2>/dev/null)
+ 
+-PROGRESS_STEP=$(shell grep "^\#define STAR_COUNT" restore.h | awk -S '{ print $$3 }')
+ ABORT_ON_ERRORS=$(shell grep "^\#define ABORT_ON_ERRORS" setfiles.c | awk -S '{ print $$3 }')
+ 
+ CFLAGS ?= -g -Werror -Wall -W
+@@ -28,8 +27,6 @@ restorecon_xattr:  restorecon_xattr.o restore.o
+ 
+ man:
+ 	@cp -af setfiles.8 setfiles.8.man
+-	@cp -af restorecon.8 restorecon.8.man
+-	@sed -i "s/STAR_COUNT/$(PROGRESS_STEP)/g" setfiles.8.man restorecon.8.man
+ 	@sed -i "s/ABORT_ON_ERRORS/$(ABORT_ON_ERRORS)/g" setfiles.8.man
+ 
+ install: all
+@@ -39,11 +36,11 @@ install: all
+ 	(cd $(SBINDIR) && ln -sf setfiles restorecon)
+ 	install -m 755 restorecon_xattr $(SBINDIR)
+ 	install -m 644 setfiles.8.man $(MANDIR)/man8/setfiles.8
+-	install -m 644 restorecon.8.man $(MANDIR)/man8/restorecon.8
++	install -m 644 restorecon.8 $(MANDIR)/man8/restorecon.8
+ 	install -m 644 restorecon_xattr.8 $(MANDIR)/man8/restorecon_xattr.8
+ 
+ clean:
+-	rm -f setfiles restorecon restorecon_xattr *.o setfiles.8.man restorecon.8.man
++	rm -f setfiles restorecon restorecon_xattr *.o setfiles.8.man
+ 
+ indent:
+ 	../../scripts/Lindent $(wildcard *.[ch])
+diff --git policycoreutils-2.6/setfiles/restore.c policycoreutils-2.6/setfiles/restore.c
+index cf04e96..50d192a 100644
+--- policycoreutils-2.6/setfiles/restore.c
++++ policycoreutils-2.6/setfiles/restore.c
+@@ -35,7 +35,8 @@ void restore_init(struct restore_opts *opts)
+ 			   r_opts->recurse | r_opts->userealpath |
+ 			   r_opts->xdev | r_opts->abort_on_error |
+ 			   r_opts->syslog_changes | r_opts->log_matches |
+-			   r_opts->ignore_noent | r_opts->ignore_mounts;
++			   r_opts->ignore_noent | r_opts->ignore_mounts |
++			   r_opts->mass_relabel;
+ 
+ 	/* Use setfiles, restorecon and restorecond own handles */
+ 	selinux_restorecon_set_sehandle(r_opts->hnd);
+diff --git policycoreutils-2.6/setfiles/restore.h policycoreutils-2.6/setfiles/restore.h
+index 97fbdf4..b64042a 100644
+--- policycoreutils-2.6/setfiles/restore.h
++++ policycoreutils-2.6/setfiles/restore.h
+@@ -17,18 +17,12 @@
+ #include <limits.h>
+ #include <stdint.h>
+ 
+-/*
+- * STAR_COUNT is also defined in libselinux/src/selinux_restorecon.c where it
+- * is used to output "*" for each number of files processed. Defined here for
+- * inclusion in man pages.
+-*/
+-#define STAR_COUNT 1000
+-
+ /* Things that need to be init'd */
+ struct restore_opts {
+ 	unsigned int nochange;
+ 	unsigned int verbose;
+ 	unsigned int progress;
++	unsigned int mass_relabel;
+ 	unsigned int set_specctx;
+ 	unsigned int add_assoc;
+ 	unsigned int ignore_digest;
+@@ -49,7 +43,6 @@ struct restore_opts {
+ 	const char *selabel_opt_path;
+ 	const char *selabel_opt_digest;
+ 	int debug;
+-	FILE *outfile;
+ };
+ 
+ void restore_init(struct restore_opts *opts);
+diff --git policycoreutils-2.6/setfiles/restorecon.8 policycoreutils-2.6/setfiles/restorecon.8
+index fdb468b..3b28482 100644
+--- policycoreutils-2.6/setfiles/restorecon.8
++++ policycoreutils-2.6/setfiles/restorecon.8
+@@ -109,10 +109,10 @@ don't change any file labels (passive check).  To display the files whose labels
+ .BR \-v .
+ .TP
+ .BI \-o \ outfilename
+-Deprecated, SELinux policy will probably block this access.  Use shell redirection to save list of files with incorrect context in filename.
++Deprecated - This option is no longer supported.
+ .TP
+ .B \-p
+-show progress by printing * every STAR_COUNT files unless relabeling the entire
++show progress by printing the number of files in 1k blocks unless relabeling the entire
+ OS, that will then show the approximate percentage complete. Note that the
+ .B \-p
+ and
+diff --git policycoreutils-2.6/setfiles/restorecon_xattr.c policycoreutils-2.6/setfiles/restorecon_xattr.c
+index 1c39efe..91c087f 100644
+--- policycoreutils-2.6/setfiles/restorecon_xattr.c
++++ policycoreutils-2.6/setfiles/restorecon_xattr.c
+@@ -14,7 +14,7 @@
+ 
+ #include "restore.h"
+ 
+-static void usage(const char *progname)
++static __attribute__((__noreturn__)) void usage(const char *progname)
+ {
+ 	fprintf(stderr,
+ 		"\nusage: %s [-vnrmdD] [-e directory] [-f specfile] pathname\n"
+diff --git policycoreutils-2.6/setfiles/setfiles.8 policycoreutils-2.6/setfiles/setfiles.8
+index 6901e13..9501845 100644
+--- policycoreutils-2.6/setfiles/setfiles.8
++++ policycoreutils-2.6/setfiles/setfiles.8
+@@ -106,11 +106,11 @@ seclabel fs mounted on a directory below this.
+ .B \-n
+ don't change any file labels (passive check).
+ .TP
+-.BI \-o \ filename
+-Deprecated, SELinux policy will probably block this access.  Use shell redirection to save list of files with incorrect context in filename.
++.BI \-o \ outfilename
++Deprecated - This option is no longer supported.
+ .TP
+ .B \-p
+-show progress by printing * every STAR_COUNT files unless relabeling the entire
++show progress by printing the number of files in 1k blocks unless relabeling the entire
+ OS, that will then show the approximate percentage complete. Note that the
+ .B \-p
+ and
+diff --git policycoreutils-2.6/setfiles/setfiles.c policycoreutils-2.6/setfiles/setfiles.c
+index 1a2d711..bc83c27 100644
+--- policycoreutils-2.6/setfiles/setfiles.c
++++ policycoreutils-2.6/setfiles/setfiles.c
+@@ -39,7 +39,7 @@ static int iamrestorecon;
+ static int ctx_validate; /* Validate contexts */
+ static const char *altpath; /* Alternate path to file_contexts */
+ 
+-void usage(const char *const name)
++static __attribute__((__noreturn__)) void usage(const char *const name)
+ {
+ 	if (iamrestorecon) {
+ 		fprintf(stderr,
+@@ -138,6 +138,26 @@ static void maybe_audit_mass_relabel(int mass_relabel, int mass_relabel_errs)
+ #endif
+ }
+ 
++static int __attribute__ ((format(printf, 2, 3)))
++log_callback(int type, const char *fmt, ...)
++{
++	int rc;
++	FILE *out;
++	va_list ap;
++
++	if (type == SELINUX_INFO) {
++		out = stdout;
++	} else {
++		out = stderr;
++		fflush(stdout);
++		fprintf(out, "%s: ", r_opts.progname);
++	}
++	va_start(ap, fmt);
++	rc = vfprintf(out, fmt, ap);
++	va_end(ap);
++	return rc;
++}
++
+ int main(int argc, char **argv)
+ {
+ 	struct stat sb;
+@@ -147,10 +167,11 @@ int main(int argc, char **argv)
+ 	char *buf = NULL;
+ 	size_t buf_len;
+ 	const char *base;
+-	int mass_relabel = 0, errors = 0;
++	int errors = 0;
+ 	const char *ropts = "e:f:hiIDlmno:pqrsvFRW0";
+ 	const char *sopts = "c:de:f:hiIDlmno:pqr:svFR:W0";
+ 	const char *opts;
++	union selinux_callback cb;
+ 
+ 	/* Initialize variables */
+ 	memset(&r_opts, 0, sizeof(r_opts));
+@@ -304,19 +325,8 @@ int main(int argc, char **argv)
+ 			r_opts.nochange = SELINUX_RESTORECON_NOCHANGE;
+ 			break;
+ 		case 'o': /* Deprecated */
+-			if (strcmp(optarg, "-") == 0) {
+-				r_opts.outfile = stdout;
+-				break;
+-			}
+-
+-			r_opts.outfile = fopen(optarg, "w");
+-			if (!r_opts.outfile) {
+-				fprintf(stderr, "Error opening %s: %s\n",
+-					optarg, strerror(errno));
+-
+-				usage(argv[0]);
+-			}
+-			__fsetlocking(r_opts.outfile, FSETLOCKING_BYCALLER);
++			fprintf(stderr, "%s: -o option no longer supported\n",
++				r_opts.progname);
+ 			break;
+ 		case 'q':
+ 			/* Deprecated - Was only used to say whether print
+@@ -380,9 +390,12 @@ int main(int argc, char **argv)
+ 
+ 	for (i = optind; i < argc; i++) {
+ 		if (!strcmp(argv[i], "/"))
+-			mass_relabel = 1;
++			r_opts.mass_relabel = SELINUX_RESTORECON_MASS_RELABEL;
+ 	}
+ 
++	cb.func_log = log_callback;
++	selinux_set_callback(SELINUX_CB_LOG, cb);
++
+ 	if (!iamrestorecon) {
+ 		if (policyfile) {
+ 			if (optind != (argc - 1))
+@@ -401,8 +414,8 @@ int main(int argc, char **argv)
+ 		 * we can support either checking against the active policy or
+ 		 * checking against a binary policy file.
+ 		 */
+-		selinux_set_callback(SELINUX_CB_VALIDATE,
+-				     (union selinux_callback)&canoncon);
++		cb.func_validate = canoncon;
++		selinux_set_callback(SELINUX_CB_VALIDATE, cb);
+ 
+ 		if (stat(argv[optind], &sb) < 0) {
+ 			perror(argv[optind]);
+@@ -449,7 +462,7 @@ int main(int argc, char **argv)
+ 		while ((len = getdelim(&buf, &buf_len, delim, f)) > 0) {
+ 			buf[len - 1] = 0;
+ 			if (!strcmp(buf, "/"))
+-				mass_relabel = 1;
++				r_opts.mass_relabel = SELINUX_RESTORECON_MASS_RELABEL;
+ 			errors |= process_glob(buf, &r_opts) < 0;
+ 		}
+ 		if (strcmp(input_filename, "-") != 0)
+@@ -459,7 +472,7 @@ int main(int argc, char **argv)
+ 			errors |= process_glob(argv[i], &r_opts) < 0;
+ 	}
+ 
+-	maybe_audit_mass_relabel(mass_relabel, errors);
++	maybe_audit_mass_relabel(r_opts.mass_relabel, errors);
+ 
+ 	if (warn_no_match)
+ 		selabel_stats(r_opts.hnd);
+@@ -467,8 +480,8 @@ int main(int argc, char **argv)
+ 	selabel_close(r_opts.hnd);
+ 	restore_finish();
+ 
+-	if (r_opts.outfile)
+-		fclose(r_opts.outfile);
++	if (r_opts.progress)
++		fprintf(stdout, "\n");
+ 
+ 	exit(errors ? -1 : 0);
+ }
+diff --git policycoreutils-2.6/setsebool/setsebool.c policycoreutils-2.6/setsebool/setsebool.c
+index b101f08..53d3566 100644
+--- policycoreutils-2.6/setsebool/setsebool.c
++++ policycoreutils-2.6/setsebool/setsebool.c
+@@ -23,7 +23,7 @@ int verbose = 0;
+ 
+ int setbool(char **list, size_t start, size_t end);
+ 
+-void usage(void)
++static __attribute__((__noreturn__)) void usage(void)
+ {
+ 	fputs
+ 	    ("\nUsage:  setsebool [ -NPV ] boolean value | bool1=val1 bool2=val2...\n\n",
